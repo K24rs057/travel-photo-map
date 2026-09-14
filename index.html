@@ -31,10 +31,12 @@
         </div>
         <div class="map-frame">
           <div id="main-map" class="map" role="application" aria-label="写真の撮影場所を示す地図"></div>
+          <button id="locate-me" class="locate-button" type="button">現在地へ</button>
           <div class="map-zoom"><button id="zoom-in" aria-label="地図を拡大">＋</button><button id="zoom-out" aria-label="地図を縮小">−</button></div>
           <div id="map-empty" class="map-empty" hidden><span aria-hidden="true">📍</span><strong>まだ地図に写真がありません</strong><p>「写真を撮る」で、旅の1枚目を残しましょう。</p></div>
           <div id="map-offline" class="offline-note" hidden>圏外です。保存済みの写真は見られます。</div>
         </div>
+        <p id="location-status" class="location-status" role="status" aria-live="polite"></p>
         <div id="unlocated-notice" class="unlocated-notice" hidden></div>
       </section>
 
@@ -68,6 +70,7 @@
     <div class="dialog-header"><h2>写真を撮る</h2><button id="camera-close" class="close-button" aria-label="閉じる">×</button></div>
     <div class="viewfinder"><video id="camera-video" autoplay playsinline muted></video><div class="viewfinder-reticle" aria-hidden="true"></div></div>
     <p id="camera-location-status" class="camera-status">現在地を確認しています…</p>
+    <button id="retry-camera-location" class="text-button camera-retry" type="button" hidden>位置情報をもう一度取得</button>
     <button id="shutter" class="shutter-button" aria-label="撮影する"><span></span></button>
     <button id="camera-fallback" class="text-button">スマホのカメラで撮る</button>
   </dialog>

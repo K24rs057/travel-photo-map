@@ -1,14 +1,14 @@
 const TILE = 256;
 
 function clampLat(lat) { return Math.max(-85.0511, Math.min(85.0511, lat)); }
-function project(lat, lng, zoom) {
+export function project(lat, lng, zoom) {
   const size = TILE * 2 ** zoom;
   const sine = Math.sin(clampLat(lat) * Math.PI / 180);
   return { x: (lng + 180) / 360 * size, y: (0.5 - Math.log((1 + sine) / (1 - sine)) / (4 * Math.PI)) * size };
 }
-function unproject(x, y, zoom) {
+export function unproject(x, y, zoom) {
   const size = TILE * 2 ** zoom;
-  return { lat: Math.atan(Math.sinh(Math.PI * (1 - 2 * y / size))) * 180 / Math.PI, lng: ((x / size * 360 + 180) % 360 + 360) % 360 - 180 };
+  return { lat: Math.atan(Math.sinh(Math.PI * (1 - 2 * y / size))) * 180 / Math.PI, lng: ((x / size * 360) % 360 + 360) % 360 - 180 };
 }
 
 export class PhotoMap {
@@ -17,10 +17,20 @@ export class PhotoMap {
     this.center = { lat, lng };
     this.zoom = zoom;
     this.photos = [];
+    this.currentLocation = null;
     this.onMarker = onMarker;
     this.tileLayer = document.createElement("div");
     this.markerLayer = document.createElement("div");
-    this.element.append(this.tileLayer, this.markerLayer);
+    this.currentMarker = document.createElement("div");
+    this.currentMarker.className = "current-location-marker";
+    this.currentMarker.setAttribute("role", "img");
+    this.currentMarker.setAttribute("aria-label", "現在地");
+    this.currentMarker.hidden = true;
+    this.element.append(this.tileLayer, this.markerLayer, this.currentMarker);
+    this.tileElements = new Map();
+    this.markerViews = [];
+    this.projectedZoom = null;
+    this.renderFrame = 0;
     const attribution = document.createElement("div");
     attribution.className = "map-attribution";
     attribution.innerHTML = '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors';
@@ -34,12 +44,30 @@ export class PhotoMap {
       event.preventDefault();
       this.setZoom(this.zoom + (event.deltaY < 0 ? 1 : -1));
     }, { passive: false });
-    this.observer = new ResizeObserver(() => this.render());
+    this.observer = new ResizeObserver(() => this.requestRender());
     this.observer.observe(element);
     this.render();
   }
 
-  setPhotos(photos) { this.photos = photos; this.renderMarkers(); }
+  requestRender() {
+    if (this.renderFrame) return;
+    this.renderFrame = requestAnimationFrame(() => {
+      this.renderFrame = 0;
+      this.render();
+    });
+  }
+
+  setPhotos(photos) {
+    this.photos = photos;
+    this.rebuildMarkers();
+    this.requestRender();
+  }
+
+  setCurrentLocation(location) {
+    this.currentLocation = location;
+    this.currentMarker.hidden = !location;
+    this.requestRender();
+  }
   fitPhotos(photos) {
     const located = photos.filter(photo => photo.lat != null && photo.lng != null);
     if (!located.length) return;
@@ -96,7 +124,7 @@ export class PhotoMap {
     const point = project(this.center.lat, this.center.lng, this.zoom);
     const next = unproject(point.x - (event.clientX - old.x), Math.max(0, Math.min(TILE * 2 ** this.zoom, point.y - (event.clientY - old.y))), this.zoom);
     this.center = next;
-    this.render();
+    this.requestRender();
   }
   pointerUp(event) { this.pointers.delete(event.pointerId); if (this.pointers.size < 2) this.pinchDistance = null; }
 
@@ -110,36 +138,37 @@ export class PhotoMap {
     const maxX = Math.floor((center.x + width / 2) / TILE);
     const minY = Math.floor((center.y - height / 2) / TILE);
     const maxY = Math.floor((center.y + height / 2) / TILE);
-    const existing = new Map([...this.tileLayer.children].map(tile => [tile.dataset.key, tile]));
+    const needed = new Set();
     for (let x = minX; x <= maxX; x++) for (let y = minY; y <= maxY; y++) {
       if (y < 0 || y >= 2 ** this.zoom) continue;
       const wrappedX = ((x % 2 ** this.zoom) + 2 ** this.zoom) % 2 ** this.zoom;
       const key = `${this.zoom}/${x}/${y}`;
-      let tile = existing.get(key);
+      needed.add(key);
+      let tile = this.tileElements.get(key);
       if (!tile) {
         tile = document.createElement("img");
         tile.className = "map-tile";
         tile.alt = "";
-        tile.dataset.key = key;
         tile.src = `https://tile.openstreetmap.org/${this.zoom}/${wrappedX}/${y}.png`;
         tile.onerror = () => { tile.style.visibility = "hidden"; };
+        this.tileElements.set(key, tile);
         this.tileLayer.append(tile);
       }
-      tile.style.left = `${x * TILE - center.x + width / 2}px`;
-      tile.style.top = `${y * TILE - center.y + height / 2}px`;
-      existing.delete(key);
+      tile.style.transform = `translate3d(${x * TILE - center.x + width / 2}px,${y * TILE - center.y + height / 2}px,0)`;
     }
-    for (const tile of existing.values()) tile.remove();
-    this.renderMarkers();
+    for (const [key, tile] of this.tileElements) {
+      if (!needed.has(key)) {
+        tile.remove();
+        this.tileElements.delete(key);
+      }
+    }
+    this.positionMarkers(center, size, width, height);
   }
 
-  renderMarkers() {
+  rebuildMarkers() {
     this.markerLayer.replaceChildren();
-    if (!this.photos.length || !this.element.clientWidth) return;
-    const width = this.element.clientWidth;
-    const height = this.element.clientHeight;
-    const size = TILE * 2 ** this.zoom;
-    const center = project(this.center.lat, this.center.lng, this.zoom);
+    this.markerViews = [];
+    this.projectedZoom = null;
     const groups = new Map();
     for (const photo of this.photos) {
       if (photo.lat == null || photo.lng == null) continue;
@@ -149,17 +178,8 @@ export class PhotoMap {
     }
     for (const group of groups.values()) {
       const photo = group[0];
-      const point = project(photo.lat, photo.lng, this.zoom);
-      let deltaX = point.x - center.x;
-      if (deltaX > size / 2) deltaX -= size;
-      if (deltaX < -size / 2) deltaX += size;
-      const x = deltaX + width / 2;
-      const y = point.y - center.y + height / 2;
-      if (x < -70 || x > width + 70 || y < -10 || y > height + 70) continue;
       const button = document.createElement("button");
       button.className = "map-marker";
-      button.style.left = `${x}px`;
-      button.style.top = `${y}px`;
       button.setAttribute("aria-label", group.length === 1 ? "撮影した写真を開く" : `写真${group.length}枚を開く`);
       const image = document.createElement("img");
       image.src = photo.thumbUrl;
@@ -173,6 +193,34 @@ export class PhotoMap {
       }
       button.addEventListener("click", () => this.onMarker?.(photo.id));
       this.markerLayer.append(button);
+      this.markerViews.push({ button, lat: photo.lat, lng: photo.lng, point: null });
+    }
+  }
+
+  positionMarkers(center, size, width, height) {
+    if (this.projectedZoom !== this.zoom) {
+      for (const marker of this.markerViews) marker.point = project(marker.lat, marker.lng, this.zoom);
+      this.projectedZoom = this.zoom;
+    }
+    for (const marker of this.markerViews) {
+      let deltaX = marker.point.x - center.x;
+      if (deltaX > size / 2) deltaX -= size;
+      if (deltaX < -size / 2) deltaX += size;
+      const x = deltaX + width / 2;
+      const y = marker.point.y - center.y + height / 2;
+      const visible = x >= -70 && x <= width + 70 && y >= -10 && y <= height + 70;
+      marker.button.hidden = !visible;
+      if (visible) marker.button.style.transform = `translate3d(${x}px,${y}px,0) translate(-50%,calc(-100% - 12px))`;
+    }
+    if (this.currentLocation) {
+      const point = project(this.currentLocation.lat, this.currentLocation.lng, this.zoom);
+      let deltaX = point.x - center.x;
+      if (deltaX > size / 2) deltaX -= size;
+      if (deltaX < -size / 2) deltaX += size;
+      const x = deltaX + width / 2;
+      const y = point.y - center.y + height / 2;
+      this.currentMarker.hidden = x < -25 || x > width + 25 || y < -25 || y > height + 25;
+      if (!this.currentMarker.hidden) this.currentMarker.style.transform = `translate3d(${x}px,${y}px,0) translate(-50%,-100%)`;
     }
   }
 }

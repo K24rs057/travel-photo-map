@@ -13,6 +13,9 @@ let activeId = null;
 let stream = null;
 let cameraLocation = null;
 let cameraLocationPromise = null;
+let cameraLocationRequestId = 0;
+let mapLocationPromise = null;
+let centerWhenLocated = false;
 let mainMap;
 let editMap;
 let detailMap;
@@ -86,7 +89,7 @@ function applyFilter() {
   mainMap.fitPhotos(located);
   $("map-count").textContent = `${located.length}枚の写真を地図に表示`;
   $("album-count").textContent = `${visiblePhotos.length}枚の写真`;
-  $("map-empty").hidden = located.length > 0;
+  $("map-empty").hidden = located.length > 0 || Boolean(mainMap.currentLocation);
   $("album-empty").hidden = visiblePhotos.length > 0;
   const unlocated = visiblePhotos.length - located.length;
   $("unlocated-notice").hidden = unlocated === 0;
@@ -122,15 +125,67 @@ function showPage(name) {
   if (name === "map") requestAnimationFrame(() => mainMap.render());
 }
 
-function currentLocation() {
+function locationErrorMessage(error) {
+  if (error?.code === 1) return "位置情報が許可されていません。Chromeのサイト設定で許可してから再試行してください。";
+  if (error?.code === 3) return "現在地の取得に時間がかかっています。屋外などで再試行してください。";
+  return "現在地を取得できませんでした。通信と端末の位置情報設定を確認してください。";
+}
+
+function currentLocation(timeout = 15000) {
   return new Promise(resolve => {
-    if (!navigator.geolocation) return resolve(null);
+    if (!navigator.geolocation) return resolve({ location: null, error: { code: 0 } });
     navigator.geolocation.getCurrentPosition(
-      position => resolve({ lat: position.coords.latitude, lng: position.coords.longitude, accuracy: position.coords.accuracy }),
-      () => resolve(null),
-      { enableHighAccuracy: true, timeout: 9000, maximumAge: 15000 },
+      position => resolve({ location: { lat: position.coords.latitude, lng: position.coords.longitude, accuracy: position.coords.accuracy, timestamp: position.timestamp }, error: null }),
+      error => resolve({ location: null, error }),
+      { enableHighAccuracy: true, timeout, maximumAge: 0 },
     );
   });
+}
+
+function requestMapLocation(center = false) {
+  if (center && mainMap.currentLocation) mainMap.setCenter(mainMap.currentLocation.lat, mainMap.currentLocation.lng, 14);
+  if (center) centerWhenLocated = true;
+  if (mapLocationPromise) return mapLocationPromise;
+  $("locate-me").disabled = true;
+  $("location-status").textContent = "現在地を確認しています…";
+  mapLocationPromise = currentLocation().then(({ location, error }) => {
+    if (location) {
+      mainMap.setCurrentLocation(location);
+      if (centerWhenLocated || !photos.some(isLocated)) mainMap.setCenter(location.lat, location.lng, 14);
+      $("map-empty").hidden = true;
+      $("location-status").textContent = "青いピンが現在地です。";
+    } else {
+      $("location-status").textContent = locationErrorMessage(error);
+    }
+    return location;
+  }).finally(() => {
+    mapLocationPromise = null;
+    centerWhenLocated = false;
+    $("locate-me").disabled = false;
+  });
+  return mapLocationPromise;
+}
+
+function requestCameraLocation(retrying = false) {
+  const requestId = ++cameraLocationRequestId;
+  $("camera-location-status").textContent = retrying ? "撮影場所をもう一度確認しています…" : "撮影場所を確認しています…";
+  $("retry-camera-location").hidden = true;
+  cameraLocationPromise = currentLocation(retrying ? 12000 : 15000).then(({ location, error }) => {
+    if (requestId !== cameraLocationRequestId) return cameraLocation;
+    cameraLocation = location;
+    if (location) {
+      mainMap.setCurrentLocation(location);
+      if (!photos.some(isLocated)) mainMap.setCenter(location.lat, location.lng, 14);
+      $("map-empty").hidden = true;
+      $("location-status").textContent = "青いピンが現在地です。";
+      $("camera-location-status").textContent = `撮影場所を取得しました（およそ±${Math.round(location.accuracy)}m）`;
+    } else {
+      $("camera-location-status").textContent = locationErrorMessage(error);
+      $("retry-camera-location").hidden = false;
+    }
+    return location;
+  });
+  return cameraLocationPromise;
 }
 
 async function saveFile(blob, { name = "写真", date = new Date().toISOString(), location = null, source = "camera" } = {}) {
@@ -147,12 +202,7 @@ async function saveFile(blob, { name = "写真", date = new Date().toISOString()
 
 async function openCamera() {
   cameraLocation = null;
-  $("camera-location-status").textContent = "現在地を確認しています…";
-  cameraLocationPromise = currentLocation().then(location => {
-    cameraLocation = location;
-    $("camera-location-status").textContent = location ? "撮影場所も一緒に保存します" : "現在地を取得できません。写真は保存できます";
-    return location;
-  });
+  requestCameraLocation();
   try {
     if (!navigator.mediaDevices?.getUserMedia) throw new Error("カメラを開けません");
     stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
@@ -181,13 +231,18 @@ async function takePhoto() {
     canvas.height = video.videoHeight;
     canvas.getContext("2d").drawImage(video, 0, 0);
     const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.92));
-    const location = cameraLocation || await cameraLocationPromise;
+    let location = cameraLocation;
+    if (!location || Date.now() - location.timestamp > 30000) {
+      location = await cameraLocationPromise;
+      if (!location || Date.now() - location.timestamp > 30000) location = await requestCameraLocation(true);
+    }
     const photo = await saveFile(blob, { name: `撮影 ${prettyDate(new Date().toISOString())}`, location });
     stopCamera();
     await refresh();
     if (isLocated(photo)) mainMap.setCenter(photo.lat, photo.lng, 13);
-    showPage("map");
-    toast(location ? "写真と撮影場所を保存しました" : "写真を保存しました。場所はあとから指定できます");
+    showPage(isLocated(photo) ? "map" : "album");
+    if (!isLocated(photo)) showPhoto(photo.id);
+    toast(location ? "写真と撮影場所をピンで保存しました" : "写真を保存しました。撮影場所を地図で指定してください");
   } catch (error) { toast(`保存できませんでした: ${error.message}`); }
   finally { $("shutter").disabled = false; }
 }
@@ -325,6 +380,8 @@ async function init() {
   $("filter-clear").addEventListener("click", () => { $("date-from").value = ""; $("date-to").value = ""; applyFilter(); });
   $("zoom-in").addEventListener("click", () => mainMap.setZoom(mainMap.zoom + 1));
   $("zoom-out").addEventListener("click", () => mainMap.setZoom(mainMap.zoom - 1));
+  $("locate-me").addEventListener("click", () => requestMapLocation(true));
+  $("retry-camera-location").addEventListener("click", () => requestCameraLocation(true));
   $("photo-close").addEventListener("click", closePhoto);
   $("photo-dialog").addEventListener("close", () => { if (detailUrl) { URL.revokeObjectURL(detailUrl); detailUrl = null; } });
   $("edit-location").addEventListener("click", editLocation);
@@ -340,6 +397,7 @@ async function init() {
   window.addEventListener("offline", updateOnline);
   updateOnline();
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").catch(() => {});
+  requestMapLocation();
 }
 
 init();
