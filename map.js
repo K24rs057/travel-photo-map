@@ -43,8 +43,10 @@ export function constrainToJapan(lat, lng, zoom, width = 0, height = 0) {
 }
 
 export class PhotoMap {
-  constructor(element, { lat = 36, lng = 138, zoom = MIN_ZOOM, onMarker = null } = {}) {
+  constructor(element, { lat = 36, lng = 138, zoom = MIN_ZOOM, onMarker = null, lightweight = false } = {}) {
     this.element = element;
+    this.lightweight = lightweight;
+    this.tileCacheLimit = lightweight ? 12 : TILE_CACHE_LIMIT;
     this.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom));
     this.center = constrainToJapan(lat, lng, this.zoom, element.clientWidth, element.clientHeight);
     this.photos = [];
@@ -58,7 +60,8 @@ export class PhotoMap {
     this.fallbackTileLayer.className = "map-tile-batch map-tile-fallback";
     this.detailTileLayer = document.createElement("div");
     this.detailTileLayer.className = "map-tile-batch map-tile-detail";
-    this.tileLayer.append(this.fallbackTileLayer, this.detailTileLayer);
+    if (lightweight) this.tileLayer.append(this.detailTileLayer);
+    else this.tileLayer.append(this.fallbackTileLayer, this.detailTileLayer);
     this.markerLayer = document.createElement("div");
     this.markerLayer.className = "map-marker-layer";
     this.currentMarker = document.createElement("div");
@@ -175,7 +178,7 @@ export class PhotoMap {
         this.panLayer.style.transform = `translate3d(${this.pan.x}px,${this.pan.y}px,0)`;
       });
     }
-    if (Math.max(Math.abs(this.pan.x), Math.abs(this.pan.y)) >= PAN_COMMIT_DISTANCE) this.commitPan();
+    if (!this.lightweight && Math.max(Math.abs(this.pan.x), Math.abs(this.pan.y)) >= PAN_COMMIT_DISTANCE) this.commitPan();
   }
   pointerUp(event) {
     this.pointers.delete(event.pointerId);
@@ -208,8 +211,10 @@ export class PhotoMap {
     const size = TILE * 2 ** this.zoom;
     const center = project(this.center.lat, this.center.lng, this.zoom);
     const detail = tileDetail(this.zoom);
-    const fallback = tileDetail(this.zoom, FALLBACK_DETAIL_OFFSET);
-    this.renderTileSet(this.fallbackTileLayer, this.fallbackTileElements, fallback, center, width, height);
+    if (!this.lightweight) {
+      const fallback = tileDetail(this.zoom, FALLBACK_DETAIL_OFFSET);
+      this.renderTileSet(this.fallbackTileLayer, this.fallbackTileElements, fallback, center, width, height);
+    }
     this.renderTileSet(this.detailTileLayer, this.tileElements, detail, center, width, height);
     this.positionMarkers(center, size, width, height);
   }
@@ -252,8 +257,17 @@ export class PhotoMap {
       entry.tile.style.height = `${span}px`;
       entry.tile.style.transform = `translate3d(${x * span - center.x + width / 2}px,${y * span - center.y + height / 2}px,0)`;
     }
+    const waitingForTiles = this.lightweight && [...needed].some(key => {
+      const entry = elements.get(key);
+      return !entry || entry.tile.naturalWidth === 0 || entry.tile.style.visibility === "hidden";
+    });
     for (const [key, entry] of elements) {
-      if (!needed.has(key)) entry.tile.hidden = true;
+      if (needed.has(key)) continue;
+      const keepAsTemporaryBackground = waitingForTiles && entry.span === span && entry.tile.naturalWidth > 0;
+      entry.tile.hidden = !keepAsTemporaryBackground;
+      if (keepAsTemporaryBackground) {
+        entry.tile.style.transform = `translate3d(${entry.x * span - center.x + width / 2}px,${entry.y * span - center.y + height / 2}px,0)`;
+      }
     }
     this.trimTileCache(elements, needed);
   }
@@ -263,6 +277,7 @@ export class PhotoMap {
     tile.onload = () => {
       clearTimeout(entry.retryTimer);
       tile.style.visibility = "visible";
+      if (this.lightweight) this.requestRender();
     };
     tile.onerror = () => {
       tile.style.visibility = "hidden";
@@ -276,11 +291,11 @@ export class PhotoMap {
   }
 
   trimTileCache(elements, needed) {
-    if (elements.size <= TILE_CACHE_LIMIT) return;
+    if (elements.size <= this.tileCacheLimit) return;
     const removable = [...elements.entries()]
       .filter(([key]) => !needed.has(key))
       .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
-    while (elements.size > TILE_CACHE_LIMIT && removable.length) {
+    while (elements.size > this.tileCacheLimit && removable.length) {
       const [key, entry] = removable.shift();
       clearTimeout(entry.retryTimer);
       entry.tile.remove();

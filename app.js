@@ -2,6 +2,7 @@ import { openDatabase, allPhotos, getPhoto, putPhoto, putMany, photoId } from ".
 import { readPhotoExif } from "./exif.js";
 import { makeBackup, readBackup } from "./archive.js";
 import { PhotoMap, isInJapanBounds } from "./map.js";
+import { reverseGeocode } from "./geocode.js";
 
 const $ = id => document.getElementById(id);
 let db;
@@ -20,6 +21,9 @@ let mainMap;
 let editMap;
 let detailMap;
 let toastTimer;
+let placeBackfillPromise = null;
+const placeAttempts = new Set();
+const placeCache = new Map();
 
 function toast(message) {
   const element = $("toast");
@@ -38,6 +42,52 @@ function prettyDate(dateString) {
 }
 function isLocated(photo) { return photo.lat != null && photo.lng != null; }
 function isMapped(photo) { return isLocated(photo) && isInJapanBounds(photo.lat, photo.lng); }
+function placeCacheKey(photo) { return isMapped(photo) ? `${photo.lat.toFixed(3)},${photo.lng.toFixed(3)}` : null; }
+
+function placeText(photo) {
+  if (!isLocated(photo)) return "撮影場所がありません。地図から指定できます。";
+  if (!isMapped(photo)) return "撮影場所：日本国外";
+  if (photo.prefecture && photo.municipality) return `撮影場所：${photo.prefecture} ${photo.municipality}`;
+  if (photo.placeLookupStatus === "failed") return "撮影場所：場所名を取得できませんでした";
+  return "撮影場所：場所名を取得中…";
+}
+
+async function persistPhotoRecord(photo) {
+  const { thumbUrl, placeLookupFailed, ...record } = photo;
+  await putPhoto(db, record);
+}
+
+async function enrichPhotoPlace(photo) {
+  if (!isMapped(photo) || (photo.prefecture && photo.municipality) || placeAttempts.has(photo.id)) return false;
+  placeAttempts.add(photo.id);
+  const cacheKey = placeCacheKey(photo);
+  try {
+    const place = placeCache.get(cacheKey) || await reverseGeocode(photo.lat, photo.lng);
+    placeCache.set(cacheKey, place);
+    Object.assign(photo, place, { placeLookupStatus: "ready" });
+    await persistPhotoRecord(photo);
+    if (activeId === photo.id && $("photo-dialog").open) $("detail-location").textContent = placeText(photo);
+    return true;
+  } catch {
+    photo.placeLookupStatus = "failed";
+    await persistPhotoRecord(photo);
+    if (activeId === photo.id && $("photo-dialog").open) $("detail-location").textContent = placeText(photo);
+    return false;
+  }
+}
+
+function backfillPlaces() {
+  if (placeBackfillPromise || !navigator.onLine) return placeBackfillPromise;
+  const pending = photos.filter(photo => isMapped(photo) && !photo.municipality && !placeAttempts.has(photo.id));
+  if (!pending.length) return null;
+  placeBackfillPromise = (async () => {
+    for (const photo of pending) {
+      await enrichPhotoPlace(photo);
+      await new Promise(resolve => setTimeout(resolve, 700));
+    }
+  })().catch(() => {}).finally(() => { placeBackfillPromise = null; });
+  return placeBackfillPromise;
+}
 
 async function makeThumbnail(blob) {
   let image;
@@ -64,6 +114,12 @@ async function refresh() {
   for (const url of thumbUrls) URL.revokeObjectURL(url);
   thumbUrls = [];
   photos = await allPhotos(db);
+  for (const photo of photos) {
+    const key = placeCacheKey(photo);
+    if (key && photo.prefecture && photo.municipality) {
+      placeCache.set(key, { prefecture: photo.prefecture, municipality: photo.municipality, municipalityCode: photo.municipalityCode });
+    }
+  }
   const missing = photos.filter(photo => !photo.thumb);
   for (const photo of missing) {
     photo.thumb = await makeThumbnail(photo.blob);
@@ -75,6 +131,7 @@ async function refresh() {
     thumbUrls.push(url);
   }
   applyFilter();
+  backfillPlaces();
   $("storage-note").textContent = `${photos.length}枚の写真をこの端末に保存中。機種変更の前にはバックアップを作ってください。`;
 }
 
@@ -210,6 +267,8 @@ async function saveFile(blob, { name = "写真", date = new Date().toISOString()
     id: photoId(), blob, thumb, name, date,
     lat: location?.lat ?? null, lng: location?.lng ?? null,
     accuracy: location?.accuracy ?? null, source,
+    prefecture: null, municipality: null, municipalityCode: null,
+    placeLookupStatus: location && isInJapanBounds(location.lat, location.lng) ? "pending" : location ? "outside" : "missing",
   };
   await putPhoto(db, record);
   return record;
@@ -288,9 +347,7 @@ function showPhoto(id) {
   detailUrl = URL.createObjectURL(photo.blob);
   $("detail-image").src = detailUrl;
   $("detail-date").textContent = prettyDate(photo.date);
-  $("detail-location").textContent = isLocated(photo)
-    ? `撮影場所: ${photo.lat >= 0 ? "北緯" : "南緯"} ${Math.abs(photo.lat).toFixed(5)}° / ${photo.lng >= 0 ? "東経" : "西経"} ${Math.abs(photo.lng).toFixed(5)}°${photo.accuracy ? `（およそ±${Math.round(photo.accuracy)}m）` : ""}${isMapped(photo) ? "" : "（日本国外）"}`
-    : "撮影場所がありません。地図から指定できます。";
+  $("detail-location").textContent = placeText(photo);
   $("detail-map").hidden = !isMapped(photo);
   $("photo-dialog").showModal();
   if (isMapped(photo)) {
@@ -325,6 +382,11 @@ async function saveLocation() {
   photo.lng = editMap.center.lng;
   photo.accuracy = null;
   photo.source = "manual";
+  photo.prefecture = null;
+  photo.municipality = null;
+  photo.municipalityCode = null;
+  photo.placeLookupStatus = "pending";
+  placeAttempts.delete(photo.id);
   await putPhoto(db, photo);
   $("location-dialog").close();
   await refresh();
@@ -373,7 +435,7 @@ async function restoreBackup(file) {
 async function init() {
   try {
     db = await openDatabase();
-    mainMap = new PhotoMap($("main-map"), { onMarker: showPhoto });
+    mainMap = new PhotoMap($("main-map"), { onMarker: showPhoto, lightweight: true });
     await refresh();
     if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
   } catch (error) {
@@ -408,7 +470,7 @@ async function init() {
   $("restore-button").addEventListener("click", () => $("restore-input").click());
   $("restore-input").addEventListener("change", async event => { await restoreBackup(event.target.files[0]); event.target.value = ""; });
   function updateOnline() { $("map-offline").hidden = navigator.onLine; }
-  window.addEventListener("online", updateOnline);
+  window.addEventListener("online", () => { updateOnline(); placeAttempts.clear(); backfillPlaces(); });
   window.addEventListener("offline", updateOnline);
   updateOnline();
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").catch(() => {});
