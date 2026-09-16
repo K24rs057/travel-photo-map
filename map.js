@@ -1,4 +1,7 @@
 const TILE = 256;
+const TILE_DETAIL_OFFSET = 2;
+const TILE_BUFFER = 160;
+const PAN_COMMIT_DISTANCE = 160;
 
 function clampLat(lat) { return Math.max(-85.0511, Math.min(85.0511, lat)); }
 export function project(lat, lng, zoom) {
@@ -11,6 +14,11 @@ export function unproject(x, y, zoom) {
   return { lat: Math.atan(Math.sinh(Math.PI * (1 - 2 * y / size))) * 180 / Math.PI, lng: ((x / size * 360) % 360 + 360) % 360 - 180 };
 }
 
+export function tileDetail(zoom) {
+  const sourceZoom = Math.max(0, zoom - TILE_DETAIL_OFFSET);
+  return { sourceZoom, span: TILE * 2 ** (zoom - sourceZoom) };
+}
+
 export class PhotoMap {
   constructor(element, { lat = 36, lng = 138, zoom = 5, onMarker = null } = {}) {
     this.element = element;
@@ -19,18 +27,25 @@ export class PhotoMap {
     this.photos = [];
     this.currentLocation = null;
     this.onMarker = onMarker;
+    this.panLayer = document.createElement("div");
+    this.panLayer.className = "map-pan-layer";
     this.tileLayer = document.createElement("div");
+    this.tileLayer.className = "map-tile-layer";
     this.markerLayer = document.createElement("div");
+    this.markerLayer.className = "map-marker-layer";
     this.currentMarker = document.createElement("div");
     this.currentMarker.className = "current-location-marker";
     this.currentMarker.setAttribute("role", "img");
     this.currentMarker.setAttribute("aria-label", "現在地");
     this.currentMarker.hidden = true;
-    this.element.append(this.tileLayer, this.markerLayer, this.currentMarker);
+    this.panLayer.append(this.tileLayer, this.markerLayer, this.currentMarker);
+    this.element.append(this.panLayer);
     this.tileElements = new Map();
     this.markerViews = [];
     this.projectedZoom = null;
     this.renderFrame = 0;
+    this.panFrame = 0;
+    this.pan = { x: 0, y: 0 };
     const attribution = document.createElement("div");
     attribution.className = "map-attribution";
     attribution.innerHTML = '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors';
@@ -95,6 +110,7 @@ export class PhotoMap {
     this.setCenter(center.lat, center.lng, zoom);
   }
   setCenter(lat, lng, zoom = this.zoom) {
+    this.commitPan();
     this.center = { lat: clampLat(lat), lng: ((lng + 180) % 360 + 360) % 360 - 180 };
     this.zoom = Math.max(2, Math.min(17, zoom));
     this.render();
@@ -103,6 +119,7 @@ export class PhotoMap {
 
   pointerDown(event) {
     if (event.target.closest(".map-marker")) return;
+    if (this.pointers.size === 1) this.commitPan();
     this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     this.element.setPointerCapture(event.pointerId);
     if (this.pointers.size === 2) {
@@ -121,12 +138,37 @@ export class PhotoMap {
       if (this.pinchDistance && distance < this.pinchDistance / 1.5) { this.setZoom(this.zoom - 1); this.pinchDistance = distance; }
       return;
     }
-    const point = project(this.center.lat, this.center.lng, this.zoom);
-    const next = unproject(point.x - (event.clientX - old.x), Math.max(0, Math.min(TILE * 2 ** this.zoom, point.y - (event.clientY - old.y))), this.zoom);
-    this.center = next;
-    this.requestRender();
+    this.pan.x += event.clientX - old.x;
+    this.pan.y += event.clientY - old.y;
+    if (!this.panFrame) {
+      this.panFrame = requestAnimationFrame(() => {
+        this.panFrame = 0;
+        this.panLayer.style.transform = `translate3d(${this.pan.x}px,${this.pan.y}px,0)`;
+      });
+    }
+    if (Math.max(Math.abs(this.pan.x), Math.abs(this.pan.y)) >= PAN_COMMIT_DISTANCE) this.commitPan();
   }
-  pointerUp(event) { this.pointers.delete(event.pointerId); if (this.pointers.size < 2) this.pinchDistance = null; }
+  pointerUp(event) {
+    this.pointers.delete(event.pointerId);
+    if (this.pointers.size < 2) this.pinchDistance = null;
+    if (!this.pointers.size) this.commitPan();
+  }
+
+  commitPan() {
+    if (!this.pan.x && !this.pan.y) return;
+    if (this.panFrame) cancelAnimationFrame(this.panFrame);
+    this.panFrame = 0;
+    const size = TILE * 2 ** this.zoom;
+    const point = project(this.center.lat, this.center.lng, this.zoom);
+    this.center = unproject(
+      point.x - this.pan.x,
+      Math.max(0, Math.min(size, point.y - this.pan.y)),
+      this.zoom,
+    );
+    this.pan = { x: 0, y: 0 };
+    this.panLayer.style.transform = "translate3d(0,0,0)";
+    this.render();
+  }
 
   render() {
     const width = this.element.clientWidth;
@@ -134,27 +176,31 @@ export class PhotoMap {
     if (!width || !height) return;
     const size = TILE * 2 ** this.zoom;
     const center = project(this.center.lat, this.center.lng, this.zoom);
-    const minX = Math.floor((center.x - width / 2) / TILE);
-    const maxX = Math.floor((center.x + width / 2) / TILE);
-    const minY = Math.floor((center.y - height / 2) / TILE);
-    const maxY = Math.floor((center.y + height / 2) / TILE);
+    const { sourceZoom, span } = tileDetail(this.zoom);
+    const sourceCount = 2 ** sourceZoom;
+    const minX = Math.floor((center.x - width / 2 - TILE_BUFFER) / span);
+    const maxX = Math.floor((center.x + width / 2 + TILE_BUFFER) / span);
+    const minY = Math.floor((center.y - height / 2 - TILE_BUFFER) / span);
+    const maxY = Math.floor((center.y + height / 2 + TILE_BUFFER) / span);
     const needed = new Set();
     for (let x = minX; x <= maxX; x++) for (let y = minY; y <= maxY; y++) {
-      if (y < 0 || y >= 2 ** this.zoom) continue;
-      const wrappedX = ((x % 2 ** this.zoom) + 2 ** this.zoom) % 2 ** this.zoom;
-      const key = `${this.zoom}/${x}/${y}`;
+      if (y < 0 || y >= sourceCount) continue;
+      const wrappedX = ((x % sourceCount) + sourceCount) % sourceCount;
+      const key = `${sourceZoom}/${x}/${y}`;
       needed.add(key);
       let tile = this.tileElements.get(key);
       if (!tile) {
         tile = document.createElement("img");
         tile.className = "map-tile";
         tile.alt = "";
-        tile.src = `https://tile.openstreetmap.org/${this.zoom}/${wrappedX}/${y}.png`;
+        tile.style.width = `${span}px`;
+        tile.style.height = `${span}px`;
+        tile.src = `https://tile.openstreetmap.org/${sourceZoom}/${wrappedX}/${y}.png`;
         tile.onerror = () => { tile.style.visibility = "hidden"; };
         this.tileElements.set(key, tile);
         this.tileLayer.append(tile);
       }
-      tile.style.transform = `translate3d(${x * TILE - center.x + width / 2}px,${y * TILE - center.y + height / 2}px,0)`;
+      tile.style.transform = `translate3d(${x * span - center.x + width / 2}px,${y * span - center.y + height / 2}px,0)`;
     }
     for (const [key, tile] of this.tileElements) {
       if (!needed.has(key)) {

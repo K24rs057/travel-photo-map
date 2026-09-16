@@ -2,7 +2,10 @@
 :root .detail-map{height:180px;border-radius:12px;margin:12px 0;overflow:hidden}
 [hidden]{display:none!important}
 .map-tile{left:0;top:0;will-change:transform}
+.map-pan-layer,.map-tile-layer,.map-marker-layer{position:absolute;inset:0;pointer-events:none}
+.map-pan-layer{will-change:transform}
 .map-marker{left:0;top:0;overflow:visible;border-radius:16px;will-change:transform}
+.map-marker{pointer-events:auto}
 .map-marker img{border-radius:12px}
 .map-marker::after{content:"";position:absolute;left:17px;bottom:-14px;border-left:10px solid transparent;border-right:10px solid transparent;border-top:14px solid white;filter:drop-shadow(0 2px 2px #12384366)}
 .current-location-marker{position:absolute;left:0;top:0;width:34px;height:43px;z-index:3;pointer-events:none;will-change:transform}
