@@ -4,6 +4,9 @@ const FALLBACK_DETAIL_OFFSET = 3;
 const TILE_BUFFER = 160;
 const PAN_COMMIT_DISTANCE = 160;
 const TILE_CACHE_LIMIT = 48;
+const MIN_ZOOM = 6;
+const MAX_ZOOM = 17;
+export const JAPAN_BOUNDS = Object.freeze({ minLat: 20.0, maxLat: 46.2, minLng: 122.0, maxLng: 154.5 });
 
 function clampLat(lat) { return Math.max(-85.0511, Math.min(85.0511, lat)); }
 export function project(lat, lng, zoom) {
@@ -21,11 +24,29 @@ export function tileDetail(zoom, detailOffset = TILE_DETAIL_OFFSET) {
   return { sourceZoom, span: TILE * 2 ** (zoom - sourceZoom) };
 }
 
+export function isInJapanBounds(lat, lng) {
+  return lat >= JAPAN_BOUNDS.minLat && lat <= JAPAN_BOUNDS.maxLat
+    && lng >= JAPAN_BOUNDS.minLng && lng <= JAPAN_BOUNDS.maxLng;
+}
+
+export function constrainToJapan(lat, lng, zoom, width = 0, height = 0) {
+  const point = project(clampLat(lat), lng, zoom);
+  const northWest = project(JAPAN_BOUNDS.maxLat, JAPAN_BOUNDS.minLng, zoom);
+  const southEast = project(JAPAN_BOUNDS.minLat, JAPAN_BOUNDS.maxLng, zoom);
+  const minX = northWest.x + width / 2;
+  const maxX = southEast.x - width / 2;
+  const minY = northWest.y + height / 2;
+  const maxY = southEast.y - height / 2;
+  const x = minX <= maxX ? Math.max(minX, Math.min(maxX, point.x)) : (northWest.x + southEast.x) / 2;
+  const y = minY <= maxY ? Math.max(minY, Math.min(maxY, point.y)) : (northWest.y + southEast.y) / 2;
+  return unproject(x, y, zoom);
+}
+
 export class PhotoMap {
-  constructor(element, { lat = 36, lng = 138, zoom = 5, onMarker = null } = {}) {
+  constructor(element, { lat = 36, lng = 138, zoom = MIN_ZOOM, onMarker = null } = {}) {
     this.element = element;
-    this.center = { lat, lng };
-    this.zoom = zoom;
+    this.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom));
+    this.center = constrainToJapan(lat, lng, this.zoom, element.clientWidth, element.clientHeight);
     this.photos = [];
     this.currentLocation = null;
     this.onMarker = onMarker;
@@ -92,7 +113,7 @@ export class PhotoMap {
     this.requestRender();
   }
   fitPhotos(photos) {
-    const located = photos.filter(photo => photo.lat != null && photo.lng != null);
+    const located = photos.filter(photo => photo.lat != null && photo.lng != null && isInJapanBounds(photo.lat, photo.lng));
     if (!located.length) return;
     const reference = project(located[0].lat, located[0].lng, 0).x;
     const points = located.map(photo => {
@@ -107,7 +128,7 @@ export class PhotoMap {
     const minY = Math.min(...ys), maxY = Math.max(...ys);
     const width = this.element.clientWidth || Math.min(window.innerWidth, 850);
     const height = this.element.clientHeight || 500;
-    let zoom = 2;
+    let zoom = MIN_ZOOM;
     for (let candidate = 13; candidate >= 2; candidate--) {
       if ((maxX - minX) * 2 ** candidate <= width - 110 && (maxY - minY) * 2 ** candidate <= height - 120) {
         zoom = candidate;
@@ -119,8 +140,8 @@ export class PhotoMap {
   }
   setCenter(lat, lng, zoom = this.zoom) {
     this.commitPan();
-    this.center = { lat: clampLat(lat), lng: ((lng + 180) % 360 + 360) % 360 - 180 };
-    this.zoom = Math.max(2, Math.min(17, zoom));
+    this.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom));
+    this.center = constrainToJapan(lat, lng, this.zoom, this.element.clientWidth, this.element.clientHeight);
     this.render();
   }
   setZoom(zoom) { this.setCenter(this.center.lat, this.center.lng, zoom); }
@@ -168,11 +189,12 @@ export class PhotoMap {
     this.panFrame = 0;
     const size = TILE * 2 ** this.zoom;
     const point = project(this.center.lat, this.center.lng, this.zoom);
-    this.center = unproject(
+    const next = unproject(
       point.x - this.pan.x,
       Math.max(0, Math.min(size, point.y - this.pan.y)),
       this.zoom,
     );
+    this.center = constrainToJapan(next.lat, next.lng, this.zoom, this.element.clientWidth, this.element.clientHeight);
     this.pan = { x: 0, y: 0 };
     this.panLayer.style.transform = "translate3d(0,0,0)";
     this.render();
@@ -182,6 +204,7 @@ export class PhotoMap {
     const width = this.element.clientWidth;
     const height = this.element.clientHeight;
     if (!width || !height) return;
+    this.center = constrainToJapan(this.center.lat, this.center.lng, this.zoom, width, height);
     const size = TILE * 2 ** this.zoom;
     const center = project(this.center.lat, this.center.lng, this.zoom);
     const detail = tileDetail(this.zoom);
@@ -193,14 +216,19 @@ export class PhotoMap {
 
   renderTileSet(layer, elements, { sourceZoom, span }, center, width, height) {
     const sourceCount = 2 ** sourceZoom;
-    const minX = Math.floor((center.x - width / 2 - TILE_BUFFER) / span);
-    const maxX = Math.floor((center.x + width / 2 + TILE_BUFFER) / span);
-    const minY = Math.floor((center.y - height / 2 - TILE_BUFFER) / span);
-    const maxY = Math.floor((center.y + height / 2 + TILE_BUFFER) / span);
+    const northWest = project(JAPAN_BOUNDS.maxLat, JAPAN_BOUNDS.minLng, sourceZoom);
+    const southEast = project(JAPAN_BOUNDS.minLat, JAPAN_BOUNDS.maxLng, sourceZoom);
+    const allowedMinX = Math.max(0, Math.floor(northWest.x / TILE));
+    const allowedMaxX = Math.min(sourceCount - 1, Math.floor(southEast.x / TILE));
+    const allowedMinY = Math.max(0, Math.floor(northWest.y / TILE));
+    const allowedMaxY = Math.min(sourceCount - 1, Math.floor(southEast.y / TILE));
+    const minX = Math.max(allowedMinX, Math.floor((center.x - width / 2 - TILE_BUFFER) / span));
+    const maxX = Math.min(allowedMaxX, Math.floor((center.x + width / 2 + TILE_BUFFER) / span));
+    const minY = Math.max(allowedMinY, Math.floor((center.y - height / 2 - TILE_BUFFER) / span));
+    const maxY = Math.min(allowedMaxY, Math.floor((center.y + height / 2 + TILE_BUFFER) / span));
     const needed = new Set();
     for (let x = minX; x <= maxX; x++) for (let y = minY; y <= maxY; y++) {
-      if (y < 0 || y >= sourceCount) continue;
-      const wrappedX = ((x % sourceCount) + sourceCount) % sourceCount;
+      if (y < 0 || y >= sourceCount || x < 0 || x >= sourceCount) continue;
       const key = `${sourceZoom}/${x}/${y}`;
       needed.add(key);
       let entry = elements.get(key);
@@ -211,7 +239,7 @@ export class PhotoMap {
         tile.style.width = `${span}px`;
         tile.style.height = `${span}px`;
         tile.style.visibility = "hidden";
-        const url = `https://tile.openstreetmap.org/${sourceZoom}/${wrappedX}/${y}.png`;
+        const url = `https://tile.openstreetmap.org/${sourceZoom}/${x}/${y}.png`;
         entry = { tile, x, y, span, lastUsed: performance.now(), retryTimer: 0 };
         elements.set(key, entry);
         layer.append(tile);

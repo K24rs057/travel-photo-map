@@ -1,7 +1,7 @@
 import { openDatabase, allPhotos, getPhoto, putPhoto, putMany, photoId } from "./db.js";
 import { readPhotoExif } from "./exif.js";
 import { makeBackup, readBackup } from "./archive.js";
-import { PhotoMap } from "./map.js";
+import { PhotoMap, isInJapanBounds } from "./map.js";
 
 const $ = id => document.getElementById(id);
 let db;
@@ -37,6 +37,7 @@ function prettyDate(dateString) {
   return new Intl.DateTimeFormat("ja-JP", { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(dateString));
 }
 function isLocated(photo) { return photo.lat != null && photo.lng != null; }
+function isMapped(photo) { return isLocated(photo) && isInJapanBounds(photo.lat, photo.lng); }
 
 async function makeThumbnail(blob) {
   let image;
@@ -84,16 +85,20 @@ function applyFilter() {
     const day = localDay(photo.date);
     return (!from || day >= from) && (!to || day <= to);
   });
-  const located = visiblePhotos.filter(isLocated);
+  const located = visiblePhotos.filter(isMapped);
   mainMap.setPhotos(located);
   mainMap.fitPhotos(located);
   $("map-count").textContent = `${located.length}枚の写真を地図に表示`;
   $("album-count").textContent = `${visiblePhotos.length}枚の写真`;
   $("map-empty").hidden = located.length > 0 || Boolean(mainMap.currentLocation);
   $("album-empty").hidden = visiblePhotos.length > 0;
-  const unlocated = visiblePhotos.length - located.length;
-  $("unlocated-notice").hidden = unlocated === 0;
-  $("unlocated-notice").textContent = `${unlocated}枚は撮影場所がありません。写真一覧から写真を開き、場所を指定できます。`;
+  const unlocated = visiblePhotos.filter(photo => !isLocated(photo)).length;
+  const outsideJapan = visiblePhotos.filter(photo => isLocated(photo) && !isMapped(photo)).length;
+  $("unlocated-notice").hidden = unlocated === 0 && outsideJapan === 0;
+  $("unlocated-notice").textContent = [
+    unlocated ? `${unlocated}枚は撮影場所がありません。写真を開いて場所を指定できます。` : "",
+    outsideJapan ? `${outsideJapan}枚は日本国外で撮影されたため、日本地図には表示していません。` : "",
+  ].filter(Boolean).join(" ");
   const grid = $("album-grid");
   grid.replaceChildren();
   for (const photo of visiblePhotos) {
@@ -104,10 +109,10 @@ function applyFilter() {
     image.src = photo.thumbUrl;
     image.alt = "";
     button.append(image);
-    if (!isLocated(photo)) {
+    if (!isMapped(photo)) {
       const label = document.createElement("span");
       label.className = "no-location";
-      label.textContent = "場所なし";
+      label.textContent = isLocated(photo) ? "日本国外" : "場所なし";
       button.append(label);
     }
     button.addEventListener("click", () => showPhoto(photo.id));
@@ -150,10 +155,15 @@ function requestMapLocation(center = false) {
   $("location-status").textContent = "現在地を確認しています…";
   mapLocationPromise = currentLocation().then(({ location, error }) => {
     if (location) {
-      mainMap.setCurrentLocation(location);
-      if (centerWhenLocated || !photos.some(isLocated)) mainMap.setCenter(location.lat, location.lng, 14);
-      $("map-empty").hidden = true;
-      $("location-status").textContent = "青いピンが現在地です。";
+      if (isInJapanBounds(location.lat, location.lng)) {
+        mainMap.setCurrentLocation(location);
+        if (centerWhenLocated || !photos.some(isMapped)) mainMap.setCenter(location.lat, location.lng, 14);
+        $("map-empty").hidden = true;
+        $("location-status").textContent = "青いピンが現在地です。";
+      } else {
+        mainMap.setCurrentLocation(null);
+        $("location-status").textContent = "現在地は日本国外のため、日本地図には表示していません。";
+      }
     } else {
       $("location-status").textContent = locationErrorMessage(error);
     }
@@ -174,10 +184,15 @@ function requestCameraLocation(retrying = false) {
     if (requestId !== cameraLocationRequestId) return cameraLocation;
     cameraLocation = location;
     if (location) {
-      mainMap.setCurrentLocation(location);
-      if (!photos.some(isLocated)) mainMap.setCenter(location.lat, location.lng, 14);
-      $("map-empty").hidden = true;
-      $("location-status").textContent = "青いピンが現在地です。";
+      if (isInJapanBounds(location.lat, location.lng)) {
+        mainMap.setCurrentLocation(location);
+        if (!photos.some(isMapped)) mainMap.setCenter(location.lat, location.lng, 14);
+        $("map-empty").hidden = true;
+        $("location-status").textContent = "青いピンが現在地です。";
+      } else {
+        mainMap.setCurrentLocation(null);
+        $("location-status").textContent = "現在地は日本国外のため、日本地図には表示していません。";
+      }
       $("camera-location-status").textContent = `撮影場所を取得しました（およそ±${Math.round(location.accuracy)}m）`;
     } else {
       $("camera-location-status").textContent = locationErrorMessage(error);
@@ -239,10 +254,10 @@ async function takePhoto() {
     const photo = await saveFile(blob, { name: `撮影 ${prettyDate(new Date().toISOString())}`, location });
     stopCamera();
     await refresh();
-    if (isLocated(photo)) mainMap.setCenter(photo.lat, photo.lng, 13);
-    showPage(isLocated(photo) ? "map" : "album");
-    if (!isLocated(photo)) showPhoto(photo.id);
-    toast(location ? "写真と撮影場所をピンで保存しました" : "写真を保存しました。撮影場所を地図で指定してください");
+    if (isMapped(photo)) mainMap.setCenter(photo.lat, photo.lng, 13);
+    showPage(isMapped(photo) ? "map" : "album");
+    if (!isMapped(photo)) showPhoto(photo.id);
+    toast(isMapped(photo) ? "写真と撮影場所をピンで保存しました" : location ? "写真を保存しました。撮影場所は日本国外です" : "写真を保存しました。撮影場所を地図で指定してください");
   } catch (error) { toast(`保存できませんでした: ${error.message}`); }
   finally { $("shutter").disabled = false; }
 }
@@ -274,11 +289,11 @@ function showPhoto(id) {
   $("detail-image").src = detailUrl;
   $("detail-date").textContent = prettyDate(photo.date);
   $("detail-location").textContent = isLocated(photo)
-    ? `撮影場所: ${photo.lat >= 0 ? "北緯" : "南緯"} ${Math.abs(photo.lat).toFixed(5)}° / ${photo.lng >= 0 ? "東経" : "西経"} ${Math.abs(photo.lng).toFixed(5)}°${photo.accuracy ? `（およそ±${Math.round(photo.accuracy)}m）` : ""}`
+    ? `撮影場所: ${photo.lat >= 0 ? "北緯" : "南緯"} ${Math.abs(photo.lat).toFixed(5)}° / ${photo.lng >= 0 ? "東経" : "西経"} ${Math.abs(photo.lng).toFixed(5)}°${photo.accuracy ? `（およそ±${Math.round(photo.accuracy)}m）` : ""}${isMapped(photo) ? "" : "（日本国外）"}`
     : "撮影場所がありません。地図から指定できます。";
-  $("detail-map").hidden = !isLocated(photo);
+  $("detail-map").hidden = !isMapped(photo);
   $("photo-dialog").showModal();
-  if (isLocated(photo)) {
+  if (isMapped(photo)) {
     if (!detailMap) detailMap = new PhotoMap($("detail-map"), { zoom: 13 });
     detailMap.setCenter(photo.lat, photo.lng, 13);
     detailMap.setPhotos([photo]);
@@ -299,7 +314,7 @@ function editLocation() {
   closePhoto();
   $("location-dialog").showModal();
   if (!editMap) editMap = new PhotoMap($("edit-map"), { zoom: 12 });
-  editMap.setCenter(photo.lat ?? mainMap.center.lat, photo.lng ?? mainMap.center.lng, isLocated(photo) ? 13 : mainMap.zoom);
+  editMap.setCenter(isMapped(photo) ? photo.lat : mainMap.center.lat, isMapped(photo) ? photo.lng : mainMap.center.lng, isMapped(photo) ? 13 : mainMap.zoom);
   requestAnimationFrame(() => editMap.render());
 }
 
