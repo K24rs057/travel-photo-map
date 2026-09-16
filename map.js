@@ -1,7 +1,9 @@
 const TILE = 256;
 const TILE_DETAIL_OFFSET = 2;
+const FALLBACK_DETAIL_OFFSET = 3;
 const TILE_BUFFER = 160;
 const PAN_COMMIT_DISTANCE = 160;
+const TILE_CACHE_LIMIT = 48;
 
 function clampLat(lat) { return Math.max(-85.0511, Math.min(85.0511, lat)); }
 export function project(lat, lng, zoom) {
@@ -14,8 +16,8 @@ export function unproject(x, y, zoom) {
   return { lat: Math.atan(Math.sinh(Math.PI * (1 - 2 * y / size))) * 180 / Math.PI, lng: ((x / size * 360) % 360 + 360) % 360 - 180 };
 }
 
-export function tileDetail(zoom) {
-  const sourceZoom = Math.max(0, zoom - TILE_DETAIL_OFFSET);
+export function tileDetail(zoom, detailOffset = TILE_DETAIL_OFFSET) {
+  const sourceZoom = Math.max(0, zoom - detailOffset);
   return { sourceZoom, span: TILE * 2 ** (zoom - sourceZoom) };
 }
 
@@ -31,6 +33,11 @@ export class PhotoMap {
     this.panLayer.className = "map-pan-layer";
     this.tileLayer = document.createElement("div");
     this.tileLayer.className = "map-tile-layer";
+    this.fallbackTileLayer = document.createElement("div");
+    this.fallbackTileLayer.className = "map-tile-batch map-tile-fallback";
+    this.detailTileLayer = document.createElement("div");
+    this.detailTileLayer.className = "map-tile-batch map-tile-detail";
+    this.tileLayer.append(this.fallbackTileLayer, this.detailTileLayer);
     this.markerLayer = document.createElement("div");
     this.markerLayer.className = "map-marker-layer";
     this.currentMarker = document.createElement("div");
@@ -41,6 +48,7 @@ export class PhotoMap {
     this.panLayer.append(this.tileLayer, this.markerLayer, this.currentMarker);
     this.element.append(this.panLayer);
     this.tileElements = new Map();
+    this.fallbackTileElements = new Map();
     this.markerViews = [];
     this.projectedZoom = null;
     this.renderFrame = 0;
@@ -176,7 +184,14 @@ export class PhotoMap {
     if (!width || !height) return;
     const size = TILE * 2 ** this.zoom;
     const center = project(this.center.lat, this.center.lng, this.zoom);
-    const { sourceZoom, span } = tileDetail(this.zoom);
+    const detail = tileDetail(this.zoom);
+    const fallback = tileDetail(this.zoom, FALLBACK_DETAIL_OFFSET);
+    this.renderTileSet(this.fallbackTileLayer, this.fallbackTileElements, fallback, center, width, height);
+    this.renderTileSet(this.detailTileLayer, this.tileElements, detail, center, width, height);
+    this.positionMarkers(center, size, width, height);
+  }
+
+  renderTileSet(layer, elements, { sourceZoom, span }, center, width, height) {
     const sourceCount = 2 ** sourceZoom;
     const minX = Math.floor((center.x - width / 2 - TILE_BUFFER) / span);
     const maxX = Math.floor((center.x + width / 2 + TILE_BUFFER) / span);
@@ -188,27 +203,61 @@ export class PhotoMap {
       const wrappedX = ((x % sourceCount) + sourceCount) % sourceCount;
       const key = `${sourceZoom}/${x}/${y}`;
       needed.add(key);
-      let tile = this.tileElements.get(key);
-      if (!tile) {
-        tile = document.createElement("img");
+      let entry = elements.get(key);
+      if (!entry) {
+        const tile = document.createElement("img");
         tile.className = "map-tile";
         tile.alt = "";
         tile.style.width = `${span}px`;
         tile.style.height = `${span}px`;
-        tile.src = `https://tile.openstreetmap.org/${sourceZoom}/${wrappedX}/${y}.png`;
-        tile.onerror = () => { tile.style.visibility = "hidden"; };
-        this.tileElements.set(key, tile);
-        this.tileLayer.append(tile);
+        tile.style.visibility = "hidden";
+        const url = `https://tile.openstreetmap.org/${sourceZoom}/${wrappedX}/${y}.png`;
+        entry = { tile, x, y, span, lastUsed: performance.now(), retryTimer: 0 };
+        elements.set(key, entry);
+        layer.append(tile);
+        this.loadTile(entry, url, elements, key);
       }
-      tile.style.transform = `translate3d(${x * span - center.x + width / 2}px,${y * span - center.y + height / 2}px,0)`;
+      entry.lastUsed = performance.now();
+      entry.span = span;
+      entry.tile.hidden = false;
+      entry.tile.style.width = `${span}px`;
+      entry.tile.style.height = `${span}px`;
+      entry.tile.style.transform = `translate3d(${x * span - center.x + width / 2}px,${y * span - center.y + height / 2}px,0)`;
     }
-    for (const [key, tile] of this.tileElements) {
-      if (!needed.has(key)) {
-        tile.remove();
-        this.tileElements.delete(key);
-      }
+    for (const [key, entry] of elements) {
+      if (!needed.has(key)) entry.tile.hidden = true;
     }
-    this.positionMarkers(center, size, width, height);
+    this.trimTileCache(elements, needed);
+  }
+
+  loadTile(entry, url, elements, key, attempt = 0) {
+    const { tile } = entry;
+    tile.onload = () => {
+      clearTimeout(entry.retryTimer);
+      tile.style.visibility = "visible";
+    };
+    tile.onerror = () => {
+      tile.style.visibility = "hidden";
+      if (attempt >= 2 || elements.get(key) !== entry) return;
+      entry.retryTimer = setTimeout(() => {
+        if (elements.get(key) !== entry) return;
+        this.loadTile(entry, url, elements, key, attempt + 1);
+      }, 500 * 2 ** attempt);
+    };
+    tile.src = attempt ? `${url}?retry=${attempt}-${Date.now()}` : url;
+  }
+
+  trimTileCache(elements, needed) {
+    if (elements.size <= TILE_CACHE_LIMIT) return;
+    const removable = [...elements.entries()]
+      .filter(([key]) => !needed.has(key))
+      .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+    while (elements.size > TILE_CACHE_LIMIT && removable.length) {
+      const [key, entry] = removable.shift();
+      clearTimeout(entry.retryTimer);
+      entry.tile.remove();
+      elements.delete(key);
+    }
   }
 
   rebuildMarkers() {

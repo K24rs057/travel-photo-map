@@ -3,6 +3,8 @@
 [hidden]{display:none!important}
 .map-tile{left:0;top:0;will-change:transform}
 .map-pan-layer,.map-tile-layer,.map-marker-layer{position:absolute;inset:0;pointer-events:none}
+.map-tile-batch{position:absolute;inset:0}
+.map-tile-fallback{z-index:0}.map-tile-detail{z-index:1}
 .map-pan-layer{will-change:transform}
 .map-marker{left:0;top:0;overflow:visible;border-radius:16px;will-change:transform}
 .map-marker{pointer-events:auto}
