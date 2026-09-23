@@ -1,12 +1,12 @@
 {
-  "name": "旅の地図 — 写真を撮った場所で見る",
+  "name": "旅の地図 — 写真をタグで残す",
   "short_name": "旅の地図",
-  "description": "旅先の写真と撮影場所を、端末に残して地図で見返すアプリ",
+  "description": "旅先の写真をタグで整理して、端末に残すアプリ",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#e5efed",
-  "theme_color": "#153f3d",
+  "background_color": "#ffffff",
+  "theme_color": "#1a73e8",
   "icons": [
     { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
     { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }

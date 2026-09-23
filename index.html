@@ -3,67 +3,63 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#153f3d">
+  <meta name="theme-color" content="#1a73e8">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>旅の地図</title>
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="apple-touch-icon" href="./icons/icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
   <div class="app-shell">
     <header class="topbar">
-      <div class="brand"><span class="brand-mark" aria-hidden="true">⌖</span><div><strong>旅の地図</strong><small>思い出を、場所からたどる</small></div></div>
-      <button id="import-button" class="icon-button" aria-label="写真を取り込む" title="写真を取り込む"><span aria-hidden="true">＋</span></button>
+      <div class="brand"><span class="brand-mark" aria-hidden="true">📷</span><strong>写真</strong></div>
+      <button id="import-button" class="icon-button" aria-label="写真を取り込む" title="写真を取り込む">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+      </button>
     </header>
 
     <main>
-      <section id="map-page" class="page active" aria-label="地図">
-        <div class="map-stage">
-          <div id="main-map" class="map" role="application" aria-label="写真の撮影場所を示す地図"></div>
-          <div class="map-toolbar">
-            <div class="map-heading"><h1>旅の足あと</h1><p id="map-count">写真を地図に残しましょう</p></div>
-            <button id="filter-toggle" class="filter-button" aria-expanded="false">日付</button>
-          </div>
-          <div id="map-tag-filters" class="tag-filter-row" aria-label="タグで写真を絞り込む"></div>
-          <div id="filter-panel" class="filter-panel" hidden>
-            <label>開始日 <input id="date-from" type="date"></label>
-            <label>終了日 <input id="date-to" type="date"></label>
-            <button id="filter-clear" type="button">条件を解除</button>
-          </div>
-          <button id="locate-me" class="locate-button" type="button" aria-label="現在地へ移動"><span aria-hidden="true">◎</span><span>現在地</span></button>
-          <div class="map-zoom"><button id="zoom-in" aria-label="地図を拡大">＋</button><button id="zoom-out" aria-label="地図を縮小">−</button></div>
-          <div id="map-empty" class="map-empty" hidden><span aria-hidden="true">📍</span><strong>まだ地図に写真がありません</strong><p>「写真を撮る」で、旅の1枚目を残しましょう。</p></div>
-          <div id="map-offline" class="offline-note" hidden>圏外です。保存済みの写真は見られます。</div>
-          <div class="map-status-sheet">
-            <span class="sheet-handle" aria-hidden="true"></span>
-            <p id="location-status" class="location-status" role="status" aria-live="polite"></p>
-            <div id="unlocated-notice" class="unlocated-notice" hidden></div>
-          </div>
+      <section id="photos-page" class="page active" aria-label="写真一覧">
+        <div class="page-heading">
+          <p id="photos-count">写真を撮って残しましょう</p>
+          <button id="filter-toggle" class="filter-button" aria-expanded="false">日付で絞り込む</button>
         </div>
-      </section>
-
-      <section id="album-page" class="page" aria-label="写真一覧">
-        <div class="page-heading"><h1>写真一覧</h1><p id="album-count"></p></div>
-        <div id="album-tag-filters" class="tag-filter-row album-tags" aria-label="タグで写真を絞り込む"></div>
-        <div id="album-grid" class="album-grid"></div>
-        <div id="album-empty" class="album-empty" hidden><span aria-hidden="true">▧</span><strong>写真がまだありません</strong><p>旅先で撮るか、スマホの写真を取り込んでください。</p></div>
+        <div id="photos-tag-filters" class="tag-filter-row" aria-label="タグで写真を絞り込む"></div>
+        <div id="filter-panel" class="filter-panel" hidden>
+          <label>開始日 <input id="date-from" type="date"></label>
+          <label>終了日 <input id="date-to" type="date"></label>
+          <button id="filter-clear" type="button">条件を解除</button>
+        </div>
+        <div id="photos-grid" class="photo-grid"></div>
+        <div id="photos-empty" class="photos-empty" hidden><span aria-hidden="true">🖼️</span><strong>まだ写真がありません</strong><p>「写真を撮る」で、最初の1枚を残しましょう。</p></div>
       </section>
 
       <section id="settings-page" class="page" aria-label="保存とバックアップ">
-        <div class="page-heading"><h1>写真を守る</h1><p>写真はこの端末のアプリ内に保存されています。</p></div>
-        <div class="settings-card backup-card"><div class="settings-symbol">↓</div><div><h2>バックアップを保存</h2><p>写真・撮影場所・タグを1つのZIPファイルにまとめます。更新前にも必ず保存してください。</p><button id="backup-button" class="action-button">バックアップを作る</button></div></div>
+        <div class="page-heading"><p>写真はこの端末のアプリ内に保存されています。</p></div>
+        <div class="settings-card backup-card"><div class="settings-symbol">↓</div><div><h2>バックアップを保存</h2><p>写真・撮影日時・タグを1つのZIPファイルにまとめます。更新前にも必ず保存してください。</p><button id="backup-button" class="action-button">バックアップを作る</button></div></div>
         <div class="settings-card"><div class="settings-symbol">↑</div><div><h2>バックアップを復元</h2><p>このアプリで作ったZIPファイルから写真を戻します。既存の写真は残ります。</p><button id="restore-button" class="secondary-button">ZIPファイルを選ぶ</button></div></div>
         <p id="storage-note" class="storage-note"></p>
       </section>
     </main>
 
     <nav class="bottom-nav" aria-label="メインメニュー">
-      <button class="nav-button active" data-page="map" aria-current="page"><span aria-hidden="true">⌖</span><span>地図</span></button>
-      <button class="nav-button" data-page="album"><span aria-hidden="true">▧</span><span>写真</span></button>
-      <button id="take-photo" class="shoot-button" aria-label="写真を撮る"><span aria-hidden="true">◎</span><span>写真を撮る</span></button>
-      <button class="nav-button" data-page="settings"><span aria-hidden="true">☁</span><span>保存</span></button>
+      <button class="nav-button active" data-page="photos" aria-current="page">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5" fill="currentColor"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5" fill="currentColor" opacity=".45"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5" fill="currentColor" opacity=".45"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5" fill="currentColor" opacity=".45"/></svg>
+        <span>写真</span>
+      </button>
+      <button id="take-photo" class="shoot-button" aria-label="写真を撮る">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 8.5C4 6.6 5.6 5 7.5 5h9C18.4 5 20 6.6 20 8.5v7c0 1.9-1.6 3.5-3.5 3.5h-9C5.6 19 4 17.4 4 15.5v-7Z" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="3.4" stroke="currentColor" stroke-width="1.8"/></svg>
+        <span>写真を撮る</span>
+      </button>
+      <button class="nav-button" data-page="settings">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 19v-6.2c0-.6.3-1.2.8-1.6l5.5-4.4a1.6 1.6 0 0 1 2 0l5.5 4.4c.5.4.8 1 .8 1.6V19" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+        <span>保存</span>
+      </button>
     </nav>
   </div>
 
@@ -74,8 +70,6 @@
   <dialog id="camera-dialog" class="camera-dialog">
     <div class="dialog-header"><h2>写真を撮る</h2><button id="camera-close" class="close-button" aria-label="閉じる">×</button></div>
     <div class="viewfinder"><video id="camera-video" autoplay playsinline muted></video><div class="viewfinder-reticle" aria-hidden="true"></div></div>
-    <p id="camera-location-status" class="camera-status">現在地を確認しています…</p>
-    <button id="retry-camera-location" class="text-button camera-retry" type="button" hidden>位置情報をもう一度取得</button>
     <button id="shutter" class="shutter-button" aria-label="撮影する"><span></span></button>
     <button id="camera-fallback" class="text-button">スマホのカメラで撮る</button>
   </dialog>
@@ -86,22 +80,12 @@
     <img id="detail-image" class="detail-image" alt="選択した旅の写真">
     <div class="detail-body">
       <p id="detail-date" class="detail-date"></p>
-      <p id="detail-location" class="detail-location"></p>
       <div class="detail-tag-section">
         <h3>タグ</h3>
         <div id="detail-tags" class="detail-tags" aria-label="写真につけるタグ"></div>
         <div class="custom-tag-row"><input id="custom-tag" type="text" maxlength="20" placeholder="好きなタグを入力" aria-label="新しいタグ"><button id="add-custom-tag" type="button">追加</button></div>
       </div>
-      <div id="detail-map" class="detail-map map" aria-label="この写真の撮影場所"></div>
-      <button id="edit-location" class="secondary-button detail-location-button">場所を直す</button>
     </div>
-  </dialog>
-
-  <dialog id="location-dialog" class="location-dialog">
-    <div class="dialog-header"><h2>撮影場所を選ぶ</h2><button id="location-close" class="close-button" aria-label="閉じる">×</button></div>
-    <p class="location-help">地図を動かし、写真を撮った場所を中央のピンに合わせてください。</p>
-    <div class="location-map-wrap"><div id="edit-map" class="map" role="application" aria-label="撮影場所を修正する地図"></div><div class="center-pin" aria-hidden="true">📍</div><div class="map-zoom"><button id="edit-zoom-in" aria-label="地図を拡大">＋</button><button id="edit-zoom-out" aria-label="地図を縮小">−</button></div></div>
-    <button id="save-location" class="action-button full-width">この場所に保存</button>
   </dialog>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
