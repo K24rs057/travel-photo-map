@@ -5,6 +5,8 @@ import { makeBackup, readBackup } from "./archive.js";
 const $ = id => document.getElementById(id);
 const DEFAULT_TAGS = ["グルメ", "道の駅", "晩酌", "デザート"];
 const MAX_TAGS_PER_PHOTO = 12;
+const MAX_CUSTOM_TAGS = 40;
+const CUSTOM_TAGS_KEY = "travel-photo-map:custom-tags";
 let db;
 let photos = [];
 let visiblePhotos = [];
@@ -34,8 +36,32 @@ function normalizeTags(tags) {
   if (!Array.isArray(tags)) return [];
   return [...new Set(tags.map(tag => typeof tag === "string" ? tag.trim() : "").filter(Boolean))].slice(0, MAX_TAGS_PER_PHOTO);
 }
+function loadCustomTags() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(CUSTOM_TAGS_KEY) || "[]");
+    return normalizeTags(stored).slice(0, MAX_CUSTOM_TAGS);
+  } catch {
+    return [];
+  }
+}
+function saveCustomTags(tags) {
+  try { localStorage.setItem(CUSTOM_TAGS_KEY, JSON.stringify(tags)); } catch {}
+}
+let customTags = loadCustomTags();
 function availableTags() {
-  return [...new Set([...DEFAULT_TAGS, ...photos.flatMap(photo => normalizeTags(photo.tags))])];
+  return [...new Set([...DEFAULT_TAGS, ...customTags, ...photos.flatMap(photo => normalizeTags(photo.tags))])];
+}
+function createTag(rawName) {
+  const tag = (rawName || "").trim();
+  if (!tag) return;
+  if (tag.length > 20) return toast("タグは20文字以内で入力してください");
+  if (availableTags().includes(tag)) return toast("そのタグはすでにあります");
+  if (customTags.length >= MAX_CUSTOM_TAGS) return toast(`タグは${MAX_CUSTOM_TAGS}個までです`);
+  customTags = [...customTags, tag];
+  saveCustomTags(customTags);
+  activeTag = tag;
+  applyFilter();
+  toast(`「${tag}」を追加しました`);
 }
 
 async function persistPhotoRecord(photo) {
@@ -133,6 +159,13 @@ function renderTagFilters() {
     });
     row.append(button);
   }
+  const addButton = document.createElement("button");
+  addButton.type = "button";
+  addButton.className = "tag-filter tag-filter-add";
+  addButton.textContent = "＋ タグを追加";
+  addButton.setAttribute("aria-label", "新しいタグを追加");
+  addButton.addEventListener("click", () => createTag(prompt("新しいタグの名前を入力してください")));
+  row.append(addButton);
 }
 
 function renderDetailTags(photo) {
