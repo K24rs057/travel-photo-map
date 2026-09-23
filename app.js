@@ -11,7 +11,7 @@ const CUSTOM_TAGS_KEY = "travel-photo-map:custom-tags";
 let db;
 let photos = [];
 let visiblePhotos = [];
-let activeTag = "";
+let activeTags = new Set();
 let thumbUrls = [];
 let detailUrl = null;
 let activeId = null;
@@ -60,7 +60,7 @@ function createTag(rawName) {
   if (customTags.length >= MAX_CUSTOM_TAGS) return toast(`タグは${MAX_CUSTOM_TAGS}個までです`);
   customTags = [...customTags, tag];
   saveCustomTags(customTags);
-  activeTag = tag;
+  activeTags.add(tag);
   applyFilter();
   toast(`「${tag}」を追加しました`);
 }
@@ -116,7 +116,10 @@ function applyFilter() {
   visiblePhotos = photos.filter(photo => {
     const day = localDay(photo.date);
     const dateMatches = (!from || day >= from) && (!to || day <= to);
-    return dateMatches && (!activeTag || normalizeTags(photo.tags).includes(activeTag));
+    if (!dateMatches) return false;
+    if (activeTags.size === 0) return true;
+    const tags = normalizeTags(photo.tags);
+    return [...activeTags].every(tag => tags.includes(tag));
   });
   $("photos-count").textContent = visiblePhotos.length ? `${visiblePhotos.length}枚の写真` : "写真を撮って残しましょう";
   renderTagFilters();
@@ -145,7 +148,7 @@ function applyFilter() {
 
 function renderTagFilters() {
   const tags = availableTags();
-  if (activeTag && !tags.includes(activeTag)) activeTag = "";
+  for (const tag of [...activeTags]) if (!tags.includes(tag)) activeTags.delete(tag);
   const row = $("photos-tag-filters");
   row.replaceChildren();
   for (const tag of ["", ...tags]) {
@@ -153,9 +156,11 @@ function renderTagFilters() {
     button.type = "button";
     button.className = "tag-filter";
     button.textContent = tag || "すべて";
-    button.setAttribute("aria-pressed", String(tag === activeTag));
+    button.setAttribute("aria-pressed", String(tag ? activeTags.has(tag) : activeTags.size === 0));
     button.addEventListener("click", () => {
-      activeTag = tag;
+      if (!tag) activeTags.clear();
+      else if (activeTags.has(tag)) activeTags.delete(tag);
+      else activeTags.add(tag);
       applyFilter();
     });
     row.append(button);
@@ -195,7 +200,7 @@ async function togglePhotoTag(photoId, tag, forceAdd = false) {
   await persistPhotoRecord(photo);
   syncTagsToDrive(photo);
   applyFilter();
-  const stillVisible = photos.some(item => item.id === photoId) && (!activeTag || photo.tags.includes(activeTag));
+  const stillVisible = photos.some(item => item.id === photoId) && [...activeTags].every(t => photo.tags.includes(t));
   if (!stillVisible) return closePhoto();
   renderDetailTags(photo);
   toast(exists && !forceAdd ? `「${tag}」を外しました` : `「${tag}」を追加しました`);
@@ -448,7 +453,7 @@ async function init() {
   $("filter-toggle").addEventListener("click", () => { const panel = $("filter-panel"); panel.hidden = !panel.hidden; $("filter-toggle").setAttribute("aria-expanded", String(!panel.hidden)); });
   $("date-from").addEventListener("change", applyFilter);
   $("date-to").addEventListener("change", applyFilter);
-  $("filter-clear").addEventListener("click", () => { $("date-from").value = ""; $("date-to").value = ""; activeTag = ""; applyFilter(); });
+  $("filter-clear").addEventListener("click", () => { $("date-from").value = ""; $("date-to").value = ""; activeTags.clear(); applyFilter(); });
   $("photo-close").addEventListener("click", closePhoto);
   $("photo-dialog").addEventListener("close", () => { if (detailUrl) { URL.revokeObjectURL(detailUrl); detailUrl = null; } });
   $("add-custom-tag").addEventListener("click", addCustomTag);
