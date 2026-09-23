@@ -2,6 +2,9 @@ const CLIENT_ID_KEY = "travel-photo-map:drive-client-id";
 const FOLDER_ID_KEY = "travel-photo-map:drive-folder-id";
 const FOLDER_NAME = "旅の思い出";
 const SCOPE = "https://www.googleapis.com/auth/drive.file";
+// OAuthクライアントIDはパスワードなどの機密情報ではなく、公開してよい識別子。
+// 誰の端末でも入力なしでログインできるよう、既定値としてコードに含める。
+const DEFAULT_CLIENT_ID = "238517824448-clj6lj7hksiulpv4uvfj3hvdbj2ov4a7.apps.googleusercontent.com";
 
 let gsiLoadPromise = null;
 let tokenClient = null;
@@ -9,7 +12,7 @@ let accessToken = null;
 let accessTokenExpiry = 0;
 
 export function getClientId() {
-  return localStorage.getItem(CLIENT_ID_KEY) || "";
+  return localStorage.getItem(CLIENT_ID_KEY) || DEFAULT_CLIENT_ID;
 }
 export function setClientId(clientId) {
   localStorage.setItem(CLIENT_ID_KEY, clientId.trim());

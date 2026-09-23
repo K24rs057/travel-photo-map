@@ -219,11 +219,9 @@ async function addCustomTag() {
 let driveFolderId = null;
 
 function renderDriveUI() {
-  const configured = drive.isConfigured();
-  $("drive-setup").hidden = configured;
-  $("drive-signed-out").hidden = !configured || drive.isSignedIn();
-  $("drive-signed-in").hidden = !configured || !drive.isSignedIn();
-  if (configured && drive.isSignedIn()) renderShareList();
+  $("drive-signed-out").hidden = drive.isSignedIn();
+  $("drive-signed-in").hidden = !drive.isSignedIn();
+  if (drive.isSignedIn()) renderShareList();
 }
 
 async function uploadPhotoToDrive(photo) {
@@ -458,14 +456,6 @@ async function init() {
   $("backup-button").addEventListener("click", exportBackup);
   $("restore-button").addEventListener("click", () => $("restore-input").click());
   $("restore-input").addEventListener("change", async event => { await restoreBackup(event.target.files[0]); event.target.value = ""; });
-  $("drive-client-id").value = drive.getClientId();
-  $("drive-save-client-id").addEventListener("click", () => {
-    const value = $("drive-client-id").value.trim();
-    if (!value) return toast("クライアントIDを入力してください");
-    drive.setClientId(value);
-    toast("クライアントIDを保存しました");
-    renderDriveUI();
-  });
   $("drive-sign-in").addEventListener("click", driveSignIn);
   $("drive-sign-out").addEventListener("click", () => { drive.signOut(); driveFolderId = null; renderDriveUI(); });
   $("drive-upload-all").addEventListener("click", uploadAllToDrive);
