@@ -5,9 +5,12 @@ import { PhotoMap, isInJapanBounds } from "./map.js";
 import { reverseGeocode } from "./geocode.js";
 
 const $ = id => document.getElementById(id);
+const DEFAULT_TAGS = ["グルメ", "道の駅", "晩酌", "デザート"];
+const MAX_TAGS_PER_PHOTO = 12;
 let db;
 let photos = [];
 let visiblePhotos = [];
+let activeTag = "";
 let thumbUrls = [];
 let detailUrl = null;
 let activeId = null;
@@ -43,6 +46,13 @@ function prettyDate(dateString) {
 function isLocated(photo) { return photo.lat != null && photo.lng != null; }
 function isMapped(photo) { return isLocated(photo) && isInJapanBounds(photo.lat, photo.lng); }
 function placeCacheKey(photo) { return isMapped(photo) ? `${photo.lat.toFixed(3)},${photo.lng.toFixed(3)}` : null; }
+function normalizeTags(tags) {
+  if (!Array.isArray(tags)) return [];
+  return [...new Set(tags.map(tag => typeof tag === "string" ? tag.trim() : "").filter(Boolean))].slice(0, MAX_TAGS_PER_PHOTO);
+}
+function availableTags() {
+  return [...new Set([...DEFAULT_TAGS, ...photos.flatMap(photo => normalizeTags(photo.tags))])];
+}
 
 function placeText(photo) {
   if (!isLocated(photo)) return "撮影場所がありません。地図から指定できます。";
@@ -115,6 +125,7 @@ async function refresh() {
   thumbUrls = [];
   photos = await allPhotos(db);
   for (const photo of photos) {
+    photo.tags = normalizeTags(photo.tags);
     const key = placeCacheKey(photo);
     if (key && photo.prefecture && photo.municipality) {
       placeCache.set(key, { prefecture: photo.prefecture, municipality: photo.municipality, municipalityCode: photo.municipalityCode });
@@ -140,13 +151,15 @@ function applyFilter() {
   const to = $("date-to").value;
   visiblePhotos = photos.filter(photo => {
     const day = localDay(photo.date);
-    return (!from || day >= from) && (!to || day <= to);
+    const dateMatches = (!from || day >= from) && (!to || day <= to);
+    return dateMatches && (!activeTag || normalizeTags(photo.tags).includes(activeTag));
   });
   const located = visiblePhotos.filter(isMapped);
   mainMap.setPhotos(located);
   mainMap.fitPhotos(located);
   $("map-count").textContent = `${located.length}枚の写真を地図に表示`;
   $("album-count").textContent = `${visiblePhotos.length}枚の写真`;
+  renderTagFilters();
   $("map-empty").hidden = located.length > 0 || Boolean(mainMap.currentLocation);
   $("album-empty").hidden = visiblePhotos.length > 0;
   const unlocated = visiblePhotos.filter(photo => !isLocated(photo)).length;
@@ -166,6 +179,13 @@ function applyFilter() {
     image.src = photo.thumbUrl;
     image.alt = "";
     button.append(image);
+    const tags = normalizeTags(photo.tags);
+    if (tags.length) {
+      const tagList = document.createElement("span");
+      tagList.className = "photo-tags";
+      tagList.textContent = tags.length > 1 ? `${tags[0]} ＋${tags.length - 1}` : tags[0];
+      button.append(tagList);
+    }
     if (!isMapped(photo)) {
       const label = document.createElement("span");
       label.className = "no-location";
@@ -175,6 +195,73 @@ function applyFilter() {
     button.addEventListener("click", () => showPhoto(photo.id));
     grid.append(button);
   }
+}
+
+function renderTagFilters() {
+  const tags = availableTags();
+  if (activeTag && !tags.includes(activeTag)) activeTag = "";
+  for (const id of ["map-tag-filters", "album-tag-filters"]) {
+    const row = $(id);
+    row.replaceChildren();
+    for (const tag of ["", ...tags]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "tag-filter";
+      button.textContent = tag || "すべて";
+      button.setAttribute("aria-pressed", String(tag === activeTag));
+      button.addEventListener("click", () => {
+        activeTag = tag;
+        applyFilter();
+      });
+      row.append(button);
+    }
+  }
+}
+
+function renderDetailTags(photo) {
+  const selected = new Set(normalizeTags(photo.tags));
+  const choices = [...new Set([...DEFAULT_TAGS, ...availableTags(), ...selected])];
+  const container = $("detail-tags");
+  container.replaceChildren();
+  for (const tag of choices) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "detail-tag";
+    button.textContent = tag;
+    button.setAttribute("aria-pressed", String(selected.has(tag)));
+    button.addEventListener("click", () => togglePhotoTag(photo.id, tag));
+    container.append(button);
+  }
+}
+
+async function togglePhotoTag(photoId, tag, forceAdd = false) {
+  const photo = photos.find(item => item.id === photoId);
+  if (!photo) return;
+  const tags = normalizeTags(photo.tags);
+  const exists = tags.includes(tag);
+  if (!exists && tags.length >= MAX_TAGS_PER_PHOTO) return toast(`タグは${MAX_TAGS_PER_PHOTO}個までです`);
+  photo.tags = exists && !forceAdd ? tags.filter(item => item !== tag) : [...new Set([...tags, tag])];
+  await persistPhotoRecord(photo);
+  applyFilter();
+  const stillVisible = photos.some(item => item.id === photoId) && (!activeTag || photo.tags.includes(activeTag));
+  if (!stillVisible) return closePhoto();
+  renderDetailTags(photo);
+  toast(exists && !forceAdd ? `「${tag}」を外しました` : `「${tag}」を追加しました`);
+}
+
+async function addCustomTag() {
+  const input = $("custom-tag");
+  const tag = input.value.trim();
+  if (!tag) return;
+  if (tag.length > 20) return toast("タグは20文字以内で入力してください");
+  const photo = photos.find(item => item.id === activeId);
+  if (!photo) return;
+  if (normalizeTags(photo.tags).includes(tag)) {
+    input.value = "";
+    return toast("そのタグはすでについています");
+  }
+  await togglePhotoTag(photo.id, tag, true);
+  input.value = "";
 }
 
 function showPage(name) {
@@ -269,6 +356,7 @@ async function saveFile(blob, { name = "写真", date = new Date().toISOString()
     accuracy: location?.accuracy ?? null, source,
     prefecture: null, municipality: null, municipalityCode: null,
     placeLookupStatus: location && isInJapanBounds(location.lat, location.lng) ? "pending" : location ? "outside" : "missing",
+    tags: [],
   };
   await putPhoto(db, record);
   return record;
@@ -348,6 +436,8 @@ function showPhoto(id) {
   $("detail-image").src = detailUrl;
   $("detail-date").textContent = prettyDate(photo.date);
   $("detail-location").textContent = placeText(photo);
+  $("custom-tag").value = "";
+  renderDetailTags(photo);
   $("detail-map").hidden = !isMapped(photo);
   $("photo-dialog").showModal();
   if (isMapped(photo)) {
@@ -454,7 +544,7 @@ async function init() {
   $("filter-toggle").addEventListener("click", () => { const panel = $("filter-panel"); panel.hidden = !panel.hidden; $("filter-toggle").setAttribute("aria-expanded", String(!panel.hidden)); });
   $("date-from").addEventListener("change", applyFilter);
   $("date-to").addEventListener("change", applyFilter);
-  $("filter-clear").addEventListener("click", () => { $("date-from").value = ""; $("date-to").value = ""; applyFilter(); });
+  $("filter-clear").addEventListener("click", () => { $("date-from").value = ""; $("date-to").value = ""; activeTag = ""; applyFilter(); });
   $("zoom-in").addEventListener("click", () => mainMap.setZoom(mainMap.zoom + 1));
   $("zoom-out").addEventListener("click", () => mainMap.setZoom(mainMap.zoom - 1));
   $("locate-me").addEventListener("click", () => requestMapLocation(true));
@@ -462,6 +552,8 @@ async function init() {
   $("photo-close").addEventListener("click", closePhoto);
   $("photo-dialog").addEventListener("close", () => { if (detailUrl) { URL.revokeObjectURL(detailUrl); detailUrl = null; } });
   $("edit-location").addEventListener("click", editLocation);
+  $("add-custom-tag").addEventListener("click", addCustomTag);
+  $("custom-tag").addEventListener("keydown", event => { if (event.key === "Enter") { event.preventDefault(); addCustomTag(); } });
   $("location-close").addEventListener("click", () => $("location-dialog").close());
   $("edit-zoom-in").addEventListener("click", () => editMap.setZoom(editMap.zoom + 1));
   $("edit-zoom-out").addEventListener("click", () => editMap.setZoom(editMap.zoom - 1));

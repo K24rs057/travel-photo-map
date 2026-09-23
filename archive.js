@@ -44,15 +44,26 @@ function centralHeader(name, size, crc, offset) {
   return data;
 }
 
-export async function makeBackup(photos) {
+function backupPhoto(photo, version) {
+  const { id, date, lat, lng, accuracy, source, name, blob } = photo;
+  const item = { id, date, lat, lng, accuracy, source, name, type: blob.type, file: `photos/${id}` };
+  if (version >= 2) {
+    item.tags = Array.isArray(photo.tags) ? photo.tags : [];
+    item.prefecture = photo.prefecture ?? null;
+    item.municipality = photo.municipality ?? null;
+    item.municipalityCode = photo.municipalityCode ?? null;
+    item.placeLookupStatus = photo.placeLookupStatus ?? null;
+  }
+  return item;
+}
+
+export async function makeBackup(photos, { version = 2 } = {}) {
+  if (version !== 1 && version !== 2) throw new Error("対応していないバックアップ形式です。");
   const manifest = {
     app: "travel-photo-map",
-    version: 1,
+    version,
     exportedAt: new Date().toISOString(),
-    photos: photos.map(({ id, date, lat, lng, accuracy, source, name, blob }) => ({
-      id, date, lat, lng, accuracy, source, name, type: blob.type,
-      file: `photos/${id}`,
-    })),
+    photos: photos.map(photo => backupPhoto(photo, version)),
   };
   const files = [{ name: "manifest.json", blob: new Blob([JSON.stringify(manifest)], { type: "application/json" }) },
     ...photos.map(photo => ({ name: `photos/${photo.id}`, blob: photo.blob }))];
@@ -105,7 +116,7 @@ export async function readBackup(file) {
   let manifest;
   try { manifest = JSON.parse(await files.get("manifest.json").text()); }
   catch { throw new Error("バックアップの管理情報を読めません。"); }
-  if (manifest.app !== "travel-photo-map" || manifest.version !== 1 || !Array.isArray(manifest.photos)) throw new Error("対応していないバックアップです。");
+  if (manifest.app !== "travel-photo-map" || ![1, 2].includes(manifest.version) || !Array.isArray(manifest.photos)) throw new Error("対応していないバックアップです。");
   if (manifest.photos.length > 10000) throw new Error("写真の枚数が多すぎます。");
   const records = [];
   for (const item of manifest.photos) {
@@ -114,9 +125,18 @@ export async function readBackup(file) {
         (item.lat != null && (typeof item.lat !== "number" || Math.abs(item.lat) > 90)) ||
         (item.lng != null && (typeof item.lng !== "number" || Math.abs(item.lng) > 180)) ||
         typeof item.type !== "string" || !item.type.startsWith("image/")) throw new Error("バックアップの写真情報が正しくありません。");
+    const tags = item.tags ?? [];
+    if (!Array.isArray(tags) || tags.length > 12 || tags.some(tag => typeof tag !== "string" || !tag.trim() || tag.trim().length > 20)) {
+      throw new Error("バックアップのタグ情報が正しくありません。");
+    }
     records.push({
       id: item.id, date: item.date, lat: item.lat ?? null, lng: item.lng ?? null,
       accuracy: item.accuracy ?? null, source: item.source || "restore", name: item.name || "写真",
+      tags: [...new Set(tags.map(tag => tag.trim()))],
+      prefecture: typeof item.prefecture === "string" ? item.prefecture : null,
+      municipality: typeof item.municipality === "string" ? item.municipality : null,
+      municipalityCode: typeof item.municipalityCode === "string" ? item.municipalityCode : null,
+      placeLookupStatus: typeof item.placeLookupStatus === "string" ? item.placeLookupStatus : null,
       blob: new Blob([files.get(item.file)], { type: item.type }),
     });
   }

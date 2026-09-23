@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#174554">
+  <meta name="theme-color" content="#153f3d">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>旅の地図</title>
@@ -14,41 +14,46 @@
 <body>
   <div class="app-shell">
     <header class="topbar">
-      <div class="brand"><span class="brand-mark" aria-hidden="true">⌖</span><div><strong>旅の地図</strong><small>写真を撮った場所で見返す</small></div></div>
-      <button id="import-button" class="icon-button" aria-label="写真を取り込む" title="写真を取り込む">＋</button>
+      <div class="brand"><span class="brand-mark" aria-hidden="true">⌖</span><div><strong>旅の地図</strong><small>思い出を、場所からたどる</small></div></div>
+      <button id="import-button" class="icon-button" aria-label="写真を取り込む" title="写真を取り込む"><span aria-hidden="true">＋</span></button>
     </header>
 
     <main>
       <section id="map-page" class="page active" aria-label="地図">
-        <div class="map-toolbar">
-          <div><h1>旅の足あと</h1><p id="map-count">写真を地図に残しましょう</p></div>
-          <button id="filter-toggle" class="filter-button" aria-expanded="false">日付で探す</button>
-        </div>
-        <div id="filter-panel" class="filter-panel" hidden>
-          <label>開始日 <input id="date-from" type="date"></label>
-          <label>終了日 <input id="date-to" type="date"></label>
-          <button id="filter-clear" type="button">日付を解除</button>
-        </div>
-        <div class="map-frame">
+        <div class="map-stage">
           <div id="main-map" class="map" role="application" aria-label="写真の撮影場所を示す地図"></div>
-          <button id="locate-me" class="locate-button" type="button">現在地へ</button>
+          <div class="map-toolbar">
+            <div class="map-heading"><h1>旅の足あと</h1><p id="map-count">写真を地図に残しましょう</p></div>
+            <button id="filter-toggle" class="filter-button" aria-expanded="false">日付</button>
+          </div>
+          <div id="map-tag-filters" class="tag-filter-row" aria-label="タグで写真を絞り込む"></div>
+          <div id="filter-panel" class="filter-panel" hidden>
+            <label>開始日 <input id="date-from" type="date"></label>
+            <label>終了日 <input id="date-to" type="date"></label>
+            <button id="filter-clear" type="button">条件を解除</button>
+          </div>
+          <button id="locate-me" class="locate-button" type="button" aria-label="現在地へ移動"><span aria-hidden="true">◎</span><span>現在地</span></button>
           <div class="map-zoom"><button id="zoom-in" aria-label="地図を拡大">＋</button><button id="zoom-out" aria-label="地図を縮小">−</button></div>
           <div id="map-empty" class="map-empty" hidden><span aria-hidden="true">📍</span><strong>まだ地図に写真がありません</strong><p>「写真を撮る」で、旅の1枚目を残しましょう。</p></div>
           <div id="map-offline" class="offline-note" hidden>圏外です。保存済みの写真は見られます。</div>
+          <div class="map-status-sheet">
+            <span class="sheet-handle" aria-hidden="true"></span>
+            <p id="location-status" class="location-status" role="status" aria-live="polite"></p>
+            <div id="unlocated-notice" class="unlocated-notice" hidden></div>
+          </div>
         </div>
-        <p id="location-status" class="location-status" role="status" aria-live="polite"></p>
-        <div id="unlocated-notice" class="unlocated-notice" hidden></div>
       </section>
 
       <section id="album-page" class="page" aria-label="写真一覧">
         <div class="page-heading"><h1>写真一覧</h1><p id="album-count"></p></div>
+        <div id="album-tag-filters" class="tag-filter-row album-tags" aria-label="タグで写真を絞り込む"></div>
         <div id="album-grid" class="album-grid"></div>
         <div id="album-empty" class="album-empty" hidden><span aria-hidden="true">▧</span><strong>写真がまだありません</strong><p>旅先で撮るか、スマホの写真を取り込んでください。</p></div>
       </section>
 
       <section id="settings-page" class="page" aria-label="保存とバックアップ">
         <div class="page-heading"><h1>写真を守る</h1><p>写真はこの端末のアプリ内に保存されています。</p></div>
-        <div class="settings-card"><div class="settings-symbol">↓</div><div><h2>バックアップを保存</h2><p>写真と撮影場所を1つのZIPファイルにまとめます。定期的に別の場所にも保存してください。</p><button id="backup-button" class="action-button">バックアップを作る</button></div></div>
+        <div class="settings-card backup-card"><div class="settings-symbol">↓</div><div><h2>バックアップを保存</h2><p>写真・撮影場所・タグを1つのZIPファイルにまとめます。更新前にも必ず保存してください。</p><button id="backup-button" class="action-button">バックアップを作る</button></div></div>
         <div class="settings-card"><div class="settings-symbol">↑</div><div><h2>バックアップを復元</h2><p>このアプリで作ったZIPファイルから写真を戻します。既存の写真は残ります。</p><button id="restore-button" class="secondary-button">ZIPファイルを選ぶ</button></div></div>
         <p id="storage-note" class="storage-note"></p>
       </section>
@@ -76,9 +81,20 @@
   </dialog>
 
   <dialog id="photo-dialog" class="photo-dialog">
-    <div class="dialog-header"><h2>写真の場所</h2><button id="photo-close" class="close-button" aria-label="閉じる">×</button></div>
+    <span class="sheet-handle" aria-hidden="true"></span>
+    <div class="dialog-header"><h2>旅の思い出</h2><button id="photo-close" class="close-button" aria-label="閉じる">×</button></div>
     <img id="detail-image" class="detail-image" alt="選択した旅の写真">
-    <div class="detail-body"><p id="detail-date"></p><p id="detail-location"></p><div id="detail-map" class="detail-map map" aria-label="この写真の撮影場所"></div><button id="edit-location" class="action-button">場所を直す</button></div>
+    <div class="detail-body">
+      <p id="detail-date" class="detail-date"></p>
+      <p id="detail-location" class="detail-location"></p>
+      <div class="detail-tag-section">
+        <h3>タグ</h3>
+        <div id="detail-tags" class="detail-tags" aria-label="写真につけるタグ"></div>
+        <div class="custom-tag-row"><input id="custom-tag" type="text" maxlength="20" placeholder="好きなタグを入力" aria-label="新しいタグ"><button id="add-custom-tag" type="button">追加</button></div>
+      </div>
+      <div id="detail-map" class="detail-map map" aria-label="この写真の撮影場所"></div>
+      <button id="edit-location" class="secondary-button detail-location-button">場所を直す</button>
+    </div>
   </dialog>
 
   <dialog id="location-dialog" class="location-dialog">
