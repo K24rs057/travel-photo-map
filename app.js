@@ -193,6 +193,7 @@ async function togglePhotoTag(photoId, tag, forceAdd = false) {
   if (!exists && tags.length >= MAX_TAGS_PER_PHOTO) return toast(`タグは${MAX_TAGS_PER_PHOTO}個までです`);
   photo.tags = exists && !forceAdd ? tags.filter(item => item !== tag) : [...new Set([...tags, tag])];
   await persistPhotoRecord(photo);
+  syncTagsToDrive(photo);
   applyFilter();
   const stillVisible = photos.some(item => item.id === photoId) && (!activeTag || photo.tags.includes(activeTag));
   if (!stillVisible) return closePhoto();
@@ -236,6 +237,11 @@ async function uploadPhotoToDrive(photo) {
 async function autoUploadToDrive(photo) {
   if (!drive.isConfigured() || !drive.isSignedIn() || !navigator.onLine) return;
   try { await uploadPhotoToDrive(photo); } catch { /* 次回のまとめてアップロードで再試行 */ }
+}
+
+async function syncTagsToDrive(photo) {
+  if (!photo.driveId || !drive.isConfigured() || !drive.isSignedIn() || !navigator.onLine) return;
+  try { await drive.updatePhotoMetadata(photo); } catch { /* 次回の操作時に再試行される */ }
 }
 
 async function uploadAllToDrive() {

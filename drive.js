@@ -104,8 +104,24 @@ export async function ensureFolder() {
   return created.id;
 }
 
+function sanitizeFileNamePart(text) {
+  return text.replace(/[\\/:*?"<>|]/g, "-").trim();
+}
+
+function buildPhotoFileName(photo) {
+  const day = photo.date ? photo.date.slice(0, 10) : "";
+  const tags = Array.isArray(photo.tags) ? photo.tags.filter(Boolean) : [];
+  const parts = [day, ...tags].map(sanitizeFileNamePart).filter(Boolean);
+  return `${parts.length ? parts.join("_") : photo.id}.jpg`;
+}
+
 export async function uploadPhoto(folderId, photo) {
-  const metadata = { name: `${photo.id}.jpg`, parents: [folderId] };
+  const tags = Array.isArray(photo.tags) ? photo.tags.filter(Boolean) : [];
+  const metadata = {
+    name: buildPhotoFileName(photo),
+    parents: [folderId],
+    description: tags.length ? `タグ: ${tags.join(", ")}` : "",
+  };
   const boundary = `travelphotomap-${photo.id}`;
   const metadataPart = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n`;
   const closingPart = `\r\n--${boundary}--`;
@@ -117,6 +133,15 @@ export async function uploadPhoto(folderId, photo) {
   });
   const result = await response.json();
   return result.id;
+}
+
+export async function updatePhotoMetadata(photo) {
+  const tags = Array.isArray(photo.tags) ? photo.tags.filter(Boolean) : [];
+  await driveFetch(`https://www.googleapis.com/drive/v3/files/${photo.driveId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: buildPhotoFileName(photo), description: tags.length ? `タグ: ${tags.join(", ")}` : "" }),
+  });
 }
 
 export async function listShares(folderId) {
