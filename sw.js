@@ -1,6 +1,6 @@
-const CACHE = "travel-photo-map-v10";
+const CACHE = "travel-photo-map-v11";
 const BASE = new URL("./", self.location.href);
-const SHELL = ["./", "./index.html", "./styles.css", "./app.js", "./db.js", "./exif.js", "./archive.js", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png"].map(path => new URL(path, BASE).href);
+const SHELL = ["./", "./index.html", "./styles.css", "./app.js", "./db.js", "./exif.js", "./archive.js", "./drive.js", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png"].map(path => new URL(path, BASE).href);
 
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));

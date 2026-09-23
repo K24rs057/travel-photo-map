@@ -44,6 +44,35 @@
         <div class="settings-card backup-card"><div class="settings-symbol">↓</div><div><h2>バックアップを保存</h2><p>写真・撮影日時・タグを1つのZIPファイルにまとめます。更新前にも必ず保存してください。</p><button id="backup-button" class="action-button">バックアップを作る</button></div></div>
         <div class="settings-card"><div class="settings-symbol">↑</div><div><h2>バックアップを復元</h2><p>このアプリで作ったZIPファイルから写真を戻します。既存の写真は残ります。</p><button id="restore-button" class="secondary-button">ZIPファイルを選ぶ</button></div></div>
         <p id="storage-note" class="storage-note"></p>
+
+        <div class="settings-card drive-card">
+          <div class="settings-symbol">☁</div>
+          <div class="drive-body">
+            <h2>Googleドライブ・家族共有</h2>
+            <p>写真をGoogleドライブにも保存し、指定した家族だけに共有できます。</p>
+
+            <div id="drive-setup" class="drive-block" hidden>
+              <label class="drive-label">GoogleのクライアントID <input id="drive-client-id" type="text" placeholder="xxxxx.apps.googleusercontent.com"></label>
+              <button id="drive-save-client-id" class="secondary-button">保存する</button>
+            </div>
+
+            <div id="drive-signed-out" class="drive-block" hidden>
+              <button id="drive-sign-in" class="action-button">Googleでログイン</button>
+            </div>
+
+            <div id="drive-signed-in" class="drive-block" hidden>
+              <p id="drive-status" class="drive-status"></p>
+              <button id="drive-upload-all" class="action-button">まとめてアップロード</button>
+              <p id="drive-progress" class="drive-progress" hidden></p>
+              <div class="drive-share">
+                <h3>共有する家族</h3>
+                <div id="drive-share-list" class="drive-share-list"></div>
+                <div class="custom-tag-row"><input id="drive-share-email" type="email" placeholder="family@gmail.com" aria-label="共有する家族のGoogleアカウント"><button id="drive-share-add" type="button">追加</button></div>
+              </div>
+              <button id="drive-sign-out" class="text-button">ログアウト</button>
+            </div>
+          </div>
+        </div>
       </section>
     </main>
 

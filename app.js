@@ -1,6 +1,7 @@
 import { openDatabase, allPhotos, getPhoto, putPhoto, putMany, photoId } from "./db.js";
 import { readPhotoExif } from "./exif.js";
 import { makeBackup, readBackup } from "./archive.js";
+import * as drive from "./drive.js";
 
 const $ = id => document.getElementById(id);
 const DEFAULT_TAGS = ["グルメ", "道の駅", "晩酌", "デザート"];
@@ -214,6 +215,82 @@ async function addCustomTag() {
   input.value = "";
 }
 
+let driveFolderId = null;
+
+function renderDriveUI() {
+  const configured = drive.isConfigured();
+  $("drive-setup").hidden = configured;
+  $("drive-signed-out").hidden = !configured || drive.isSignedIn();
+  $("drive-signed-in").hidden = !configured || !drive.isSignedIn();
+  if (configured && drive.isSignedIn()) renderShareList();
+}
+
+async function uploadPhotoToDrive(photo) {
+  if (photo.driveId) return;
+  if (!driveFolderId) driveFolderId = await drive.ensureFolder();
+  const driveId = await drive.uploadPhoto(driveFolderId, photo);
+  photo.driveId = driveId;
+  await persistPhotoRecord(photo);
+}
+
+async function autoUploadToDrive(photo) {
+  if (!drive.isConfigured() || !drive.isSignedIn() || !navigator.onLine) return;
+  try { await uploadPhotoToDrive(photo); } catch { /* 次回のまとめてアップロードで再試行 */ }
+}
+
+async function uploadAllToDrive() {
+  const button = $("drive-upload-all");
+  const progress = $("drive-progress");
+  const pending = photos.filter(photo => !photo.driveId);
+  if (!pending.length) return toast("アップロードする写真はありません。");
+  button.disabled = true;
+  progress.hidden = false;
+  let done = 0;
+  for (const photo of pending) {
+    progress.textContent = `${pending.length}枚中${done}枚アップロード中…`;
+    try { await uploadPhotoToDrive(photo); done++; }
+    catch (error) { toast(`アップロードを中断しました: ${error.message}`); break; }
+  }
+  progress.textContent = `${done}枚アップロードしました`;
+  button.disabled = false;
+  setTimeout(() => { progress.hidden = true; }, 4000);
+}
+
+function renderShareList() {
+  const list = $("drive-share-list");
+  list.replaceChildren();
+  list.textContent = "読み込み中…";
+  drive.listShares(driveFolderId).then(shares => {
+    list.replaceChildren();
+    if (!shares.length) { list.textContent = "まだ共有していません。"; return; }
+    for (const share of shares) {
+      const row = document.createElement("div");
+      row.className = "drive-share-row";
+      const label = document.createElement("span");
+      label.textContent = share.emailAddress;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.textContent = "解除";
+      remove.className = "text-button";
+      remove.addEventListener("click", async () => {
+        try { await drive.removeShare(driveFolderId, share.id); renderShareList(); toast(`${share.emailAddress}への共有を解除しました`); }
+        catch (error) { toast(`解除できませんでした: ${error.message}`); }
+      });
+      row.append(label, remove);
+      list.append(row);
+    }
+  }).catch(error => { list.textContent = `共有相手を読み込めませんでした: ${error.message}`; });
+}
+
+async function driveSignIn() {
+  try {
+    await drive.signIn();
+    driveFolderId = await drive.ensureFolder();
+    $("drive-status").textContent = "Googleドライブにログイン中です。";
+    renderDriveUI();
+  } catch (error) { toast(`ログインできませんでした: ${error.message}`); }
+}
+
 function showPage(name) {
   for (const page of document.querySelectorAll(".page")) page.classList.toggle("active", page.id === `${name}-page`);
   for (const button of document.querySelectorAll(".nav-button")) {
@@ -266,6 +343,7 @@ async function takePhoto() {
     showPage("photos");
     showPhoto(photo.id);
     toast("写真を保存しました");
+    autoUploadToDrive(photo);
   } catch (error) { toast(`保存できませんでした: ${error.message}`); }
   finally { $("shutter").disabled = false; }
 }
@@ -273,17 +351,19 @@ async function takePhoto() {
 async function importFiles(files) {
   if (!files.length) return;
   let saved = 0;
+  const savedPhotos = [];
   for (const file of files) {
     try {
       const exif = await readPhotoExif(file);
       const date = exif.date || (file.lastModified ? new Date(file.lastModified) : new Date()).toISOString();
-      await saveFile(file, { name: file.name, date, source: "import" });
+      savedPhotos.push(await saveFile(file, { name: file.name, date, source: "import" }));
       saved++;
     } catch (error) { toast(`${file.name}を保存できませんでした: ${error.message}`); }
   }
   await refresh();
   showPage("photos");
   if (saved) toast(`${saved}枚の写真を保存しました`);
+  for (const photo of savedPhotos) autoUploadToDrive(photo);
 }
 
 function showPhoto(id) {
@@ -372,6 +452,25 @@ async function init() {
   $("backup-button").addEventListener("click", exportBackup);
   $("restore-button").addEventListener("click", () => $("restore-input").click());
   $("restore-input").addEventListener("change", async event => { await restoreBackup(event.target.files[0]); event.target.value = ""; });
+  $("drive-client-id").value = drive.getClientId();
+  $("drive-save-client-id").addEventListener("click", () => {
+    const value = $("drive-client-id").value.trim();
+    if (!value) return toast("クライアントIDを入力してください");
+    drive.setClientId(value);
+    toast("クライアントIDを保存しました");
+    renderDriveUI();
+  });
+  $("drive-sign-in").addEventListener("click", driveSignIn);
+  $("drive-sign-out").addEventListener("click", () => { drive.signOut(); driveFolderId = null; renderDriveUI(); });
+  $("drive-upload-all").addEventListener("click", uploadAllToDrive);
+  $("drive-share-add").addEventListener("click", async () => {
+    const input = $("drive-share-email");
+    const email = input.value.trim();
+    if (!email) return;
+    try { await drive.shareFolder(driveFolderId, email); input.value = ""; renderShareList(); toast(`${email}に共有しました`); }
+    catch (error) { toast(`共有できませんでした: ${error.message}`); }
+  });
+  renderDriveUI();
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" }).then(registration => {
       registration.update().catch(() => {});
