@@ -43,15 +43,14 @@
         <div class="page-heading">
           <p id="family-count">家族の写真</p>
         </div>
-        <div id="family-signed-out" class="family-signed-out" hidden>
-          <p>Googleにログインすると、家族が共有した写真が見られます。</p>
-          <button id="family-go-settings" class="action-button">保存タブでログインする</button>
+        <p id="family-login-hint" class="family-login-hint" hidden>Googleにログインすると、最新の家族の写真に更新されます。<button id="family-login-link" type="button" class="text-button">保存タブでログインする</button></p>
+        <div id="family-share-banner" class="family-share-banner" hidden>
+          <span id="family-share-banner-text"></span>
+          <button id="family-share-all" type="button" class="secondary-button">まとめて共有</button>
         </div>
-        <div id="family-signed-in" class="family-signed-in" hidden>
-          <div id="family-tag-filters" class="tag-filter-row" aria-label="タグで家族の写真を絞り込む"></div>
-          <div id="family-grid" class="photo-grid"></div>
-          <div id="family-empty" class="photos-empty" hidden><span aria-hidden="true">👪</span><strong>まだ写真がありません</strong><p>お父さん・お母さんが撮った写真がここに並びます。</p></div>
-        </div>
+        <div id="family-tag-filters" class="tag-filter-row" aria-label="タグで家族の写真を絞り込む"></div>
+        <div id="family-grid" class="photo-grid"></div>
+        <div id="family-empty" class="photos-empty" hidden><span aria-hidden="true">👪</span><strong>まだ写真がありません</strong><p>お父さん・お母さんが撮った写真がここに並びます。</p></div>
       </section>
 
       <section id="settings-page" class="page" aria-label="保存とバックアップ">
@@ -128,6 +127,21 @@
         <div id="detail-tags" class="detail-tags" aria-label="写真につけるタグ"></div>
         <div class="custom-tag-row"><input id="custom-tag" type="text" maxlength="20" placeholder="好きなタグを入力" aria-label="新しいタグ"><button id="add-custom-tag" type="button">追加</button></div>
       </div>
+    </div>
+  </dialog>
+
+  <dialog id="family-photo-dialog" class="photo-dialog">
+    <span class="sheet-handle" aria-hidden="true"></span>
+    <div class="dialog-header"><h2>家族の写真</h2><button id="family-photo-close" class="close-button" aria-label="閉じる">×</button></div>
+    <img id="family-detail-image" class="detail-image" alt="選択した家族の写真">
+    <div class="detail-body">
+      <p id="family-detail-date" class="detail-date"></p>
+      <p id="family-detail-owner" class="detail-date"></p>
+      <div class="detail-tag-section">
+        <h3>タグ</h3>
+        <div id="family-detail-tags" class="detail-tags" aria-label="写真のタグ"></div>
+      </div>
+      <button id="family-detail-share" class="action-button" hidden>家族に共有する</button>
     </div>
   </dialog>
 

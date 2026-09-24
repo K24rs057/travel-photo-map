@@ -1,6 +1,7 @@
-import { openDatabase, allPhotos, getPhoto, putPhoto, putMany, photoId } from "./db.js";
+import { openDatabase, allPhotos, getPhoto, putPhoto, putMany, photoId, allFamilyPhotos, putManyFamily, deleteFamilyPhotos } from "./db.js";
 import { readPhotoExif } from "./exif.js";
 import { makeBackup, readBackup } from "./archive.js";
+import { diffFamilySync, annotateShareStatus, buildFamilyView } from "./family-sync.js";
 import * as drive from "./drive.js";
 
 const $ = id => document.getElementById(id);
@@ -107,6 +108,7 @@ async function refresh() {
     thumbUrls.push(url);
   }
   applyFilter();
+  renderFamilyFromCache();
   $("storage-note").textContent = `${photos.length}枚の写真をこの端末に保存中。機種変更の前にはバックアップを作ってください。`;
 }
 
@@ -200,6 +202,7 @@ async function togglePhotoTag(photoId, tag, forceAdd = false) {
   await persistPhotoRecord(photo);
   syncTagsToDrive(photo);
   applyFilter();
+  renderFamilyFromCache();
   const stillVisible = photos.some(item => item.id === photoId) && [...activeTags].every(t => photo.tags.includes(t));
   if (!stillVisible) return closePhoto();
   renderDetailTags(photo);
@@ -222,11 +225,16 @@ async function addCustomTag() {
 }
 
 let driveFolderId = null;
-let familyPhotos = [];
+let familyRecords = [];
+let familyView = [];
 let familyVisible = [];
 let familyActiveTags = new Set();
+let familyUnsharedOnly = false;
 let familyThumbUrls = [];
-let familyLoading = false;
+let familySyncing = false;
+let familyDetailUrl = null;
+let familyDetailItem = null;
+let lastFamilyMeta = [];
 
 function renderDriveUI() {
   $("drive-signed-out").hidden = drive.isSignedIn();
@@ -235,10 +243,17 @@ function renderDriveUI() {
 }
 
 function renderFamilyTagFilters() {
-  const tags = [...new Set(familyPhotos.flatMap(photo => photo.tags))];
+  const tags = [...new Set(familyView.flatMap(item => item.tags))];
   for (const tag of [...familyActiveTags]) if (!tags.includes(tag)) familyActiveTags.delete(tag);
   const row = $("family-tag-filters");
   row.replaceChildren();
+  const unsharedButton = document.createElement("button");
+  unsharedButton.type = "button";
+  unsharedButton.className = "tag-filter";
+  unsharedButton.textContent = "未共有";
+  unsharedButton.setAttribute("aria-pressed", String(familyUnsharedOnly));
+  unsharedButton.addEventListener("click", () => { familyUnsharedOnly = !familyUnsharedOnly; applyFamilyFilter(); });
+  row.append(unsharedButton);
   if (!tags.length) return;
   for (const tag of ["", ...tags]) {
     const button = document.createElement("button");
@@ -257,67 +272,163 @@ function renderFamilyTagFilters() {
 }
 
 function applyFamilyFilter() {
-  familyVisible = familyPhotos.filter(photo => {
+  familyVisible = familyView.filter(item => {
+    if (familyUnsharedOnly && item.shared) return false;
     if (familyActiveTags.size === 0) return true;
-    return [...familyActiveTags].every(tag => photo.tags.includes(tag));
+    return [...familyActiveTags].every(tag => item.tags.includes(tag));
   });
-  $("family-count").textContent = familyPhotos.length ? `${familyVisible.length}枚の写真` : "家族の写真";
+  $("family-count").textContent = familyView.length ? `${familyVisible.length}枚の写真` : "家族の写真";
   renderFamilyTagFilters();
-  $("family-empty").hidden = familyVisible.length > 0 || familyLoading;
+  $("family-empty").hidden = familyVisible.length > 0 || familySyncing;
+
+  const unsharedCount = familyView.filter(item => !item.shared).length;
+  const banner = $("family-share-banner");
+  if (unsharedCount > 0) {
+    banner.hidden = false;
+    $("family-share-banner-text").textContent = `${unsharedCount}枚がまだ家族に共有されていません`;
+  } else {
+    banner.hidden = true;
+  }
+
+  for (const url of familyThumbUrls) URL.revokeObjectURL(url);
+  familyThumbUrls = [];
   const grid = $("family-grid");
   grid.replaceChildren();
-  for (const photo of familyVisible) {
+  for (const item of familyVisible) {
     const button = document.createElement("button");
     button.className = "photo-thumb";
-    button.disabled = true;
-    if (photo.thumbUrl) {
+    if (!item.shared) button.classList.add("photo-thumb-unshared");
+    const blob = item.thumb || item.full;
+    if (blob) {
+      const url = URL.createObjectURL(blob);
+      familyThumbUrls.push(url);
       const image = document.createElement("img");
-      image.src = photo.thumbUrl;
+      image.src = url;
       image.alt = "";
       button.append(image);
     }
-    if (photo.owner) {
+    if (!item.shared) {
+      const badge = document.createElement("span");
+      badge.className = "photo-unshared-badge";
+      badge.textContent = "未共有";
+      button.append(badge);
+    }
+    if (item.owner) {
       const owner = document.createElement("span");
       owner.className = "photo-owner";
-      owner.textContent = photo.owner;
+      owner.textContent = item.owner;
       button.append(owner);
     }
-    if (photo.tags.length) {
+    if (item.tags.length) {
       const tagList = document.createElement("span");
       tagList.className = "photo-tags";
-      tagList.textContent = photo.tags.length > 1 ? `${photo.tags[0]} ＋${photo.tags.length - 1}` : photo.tags[0];
+      tagList.textContent = item.tags.length > 1 ? `${item.tags[0]} ＋${item.tags.length - 1}` : item.tags[0];
       button.append(tagList);
     }
+    button.addEventListener("click", () => openFamilyPhoto(item));
     grid.append(button);
   }
 }
 
+// IndexedDBに保存済みの家族の写真＋自分の写真の共有状況から、すぐに一覧を組み立てて表示する。
+// 通信は一切行わないので、ログインしていなくても・電波がなくても呼べる。
+function renderFamilyFromCache() {
+  const annotatedOwn = annotateShareStatus(photos, lastFamilyMeta.length ? lastFamilyMeta : familyRecords.map(r => ({ id: r.id, modifiedTime: r.modifiedTime })));
+  familyView = buildFamilyView(familyRecords, annotatedOwn);
+  applyFamilyFilter();
+}
+
 async function loadFamilyPhotos() {
-  if (!drive.isSignedIn()) {
-    $("family-signed-out").hidden = false;
-    $("family-signed-in").hidden = true;
-    return;
-  }
-  $("family-signed-out").hidden = true;
-  $("family-signed-in").hidden = false;
-  familyLoading = true;
-  $("family-count").textContent = "読み込み中…";
+  familyRecords = await allFamilyPhotos(db);
+  renderFamilyFromCache();
+  $("family-login-hint").hidden = drive.isSignedIn();
+  if (drive.isSignedIn()) syncFamilyPhotos();
+}
+
+// ドライブの家族の箱の最新状態を取りに行き、増えた・変わった写真だけ画像を取得、
+// 消えた写真は端末からも削除して、引き出し(IndexedDBのfamilyストア)を最新化する。
+async function syncFamilyPhotos() {
+  if (familySyncing) return;
+  familySyncing = true;
+  applyFamilyFilter();
   try {
     if (!driveFolderId) driveFolderId = await drive.ensureFolder();
-    const files = await drive.listFamilyPhotos(driveFolderId);
-    for (const url of familyThumbUrls) URL.revokeObjectURL(url);
-    familyThumbUrls = [];
-    familyPhotos = await Promise.all(files.map(async file => {
-      const thumbUrl = await drive.fetchThumbnailUrl(file.thumbnailLink).catch(() => null);
-      if (thumbUrl) familyThumbUrls.push(thumbUrl);
-      return { ...file, thumbUrl };
-    }));
+    const remoteMeta = await drive.listFamilyPhotos(driveFolderId);
+    lastFamilyMeta = remoteMeta;
+    const { toFetch, toRemove } = diffFamilySync(remoteMeta, familyRecords);
+    if (toRemove.length) await deleteFamilyPhotos(db, toRemove);
+    const fetched = [];
+    for (const file of toFetch) {
+      const thumb = await drive.fetchImageBlob(file.thumbnailLink).catch(() => null);
+      const full = await drive.fetchImageBlob(drive.largeImageUrl(file.thumbnailLink)).catch(() => null);
+      fetched.push({ id: file.id, date: file.date, modifiedTime: file.modifiedTime, tags: file.tags, owner: file.owner, thumb, full });
+    }
+    if (fetched.length) await putManyFamily(db, fetched);
+    familyRecords = await allFamilyPhotos(db);
+    renderFamilyFromCache();
   } catch (error) {
-    toast(`家族の写真を読み込めませんでした: ${error.message}`);
-    familyPhotos = [];
+    toast(`家族の写真を更新できませんでした: ${error.message}`);
   } finally {
-    familyLoading = false;
+    familySyncing = false;
     applyFamilyFilter();
+  }
+}
+
+function openFamilyPhoto(item) {
+  familyDetailItem = item;
+  if (familyDetailUrl) URL.revokeObjectURL(familyDetailUrl);
+  const blob = item.full || item.thumb;
+  familyDetailUrl = blob ? URL.createObjectURL(blob) : null;
+  $("family-detail-image").src = familyDetailUrl || "";
+  $("family-detail-date").textContent = prettyDate(item.date);
+  $("family-detail-owner").textContent = item.own ? "あなたの写真" : item.owner ? `撮影: ${item.owner}` : "";
+  const tags = $("family-detail-tags");
+  tags.replaceChildren();
+  for (const tag of item.tags) {
+    const chip = document.createElement("span");
+    chip.className = "detail-tag";
+    chip.textContent = tag;
+    tags.append(chip);
+  }
+  $("family-detail-share").hidden = item.shared;
+  $("family-photo-dialog").showModal();
+}
+
+function closeFamilyPhoto() {
+  $("family-photo-dialog").close();
+  if (familyDetailUrl) URL.revokeObjectURL(familyDetailUrl);
+  familyDetailUrl = null;
+  familyDetailItem = null;
+}
+
+async function shareFamilyDetailPhoto() {
+  if (!familyDetailItem?.own) return;
+  const photo = photos.find(item => item.id === familyDetailItem.localId);
+  if (!photo) return;
+  try {
+    await uploadPhotoToDrive(photo);
+    toast("家族に共有しました");
+    closeFamilyPhoto();
+    renderFamilyFromCache();
+    syncFamilyPhotos();
+  } catch (error) { toast(`共有できませんでした: ${error.message}`); }
+}
+
+async function shareAllUnshared() {
+  const banner = $("family-share-banner");
+  const button = $("family-share-all");
+  const pending = photos.filter(photo => !photo.driveId);
+  if (!pending.length) return;
+  button.disabled = true;
+  try {
+    for (const photo of pending) {
+      try { await uploadPhotoToDrive(photo); } catch { /* まとめてアップロードで再試行 */ }
+    }
+    toast("家族に共有しました");
+    renderFamilyFromCache();
+    syncFamilyPhotos();
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -327,6 +438,7 @@ async function uploadPhotoToDrive(photo) {
   const driveId = await drive.uploadPhoto(driveFolderId, photo);
   photo.driveId = driveId;
   await persistPhotoRecord(photo);
+  renderFamilyFromCache();
 }
 
 async function autoUploadToDrive(photo) {
@@ -528,6 +640,8 @@ async function init() {
   try {
     db = await openDatabase();
     await refresh();
+    familyRecords = await allFamilyPhotos(db);
+    renderFamilyFromCache();
     if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
   } catch (error) {
     toast(`保存領域を開けませんでした: ${error.message}`);
@@ -539,7 +653,11 @@ async function init() {
       if (button.dataset.page === "family") loadFamilyPhotos();
     });
   }
-  $("family-go-settings").addEventListener("click", () => showPage("settings"));
+  $("family-login-link").addEventListener("click", () => showPage("settings"));
+  $("family-share-all").addEventListener("click", shareAllUnshared);
+  $("family-photo-close").addEventListener("click", closeFamilyPhoto);
+  $("family-photo-dialog").addEventListener("close", () => { if (familyDetailUrl) { URL.revokeObjectURL(familyDetailUrl); familyDetailUrl = null; } familyDetailItem = null; });
+  $("family-detail-share").addEventListener("click", shareFamilyDetailPhoto);
   $("take-photo").addEventListener("click", openCamera);
   $("shutter").addEventListener("click", takePhoto);
   $("camera-close").addEventListener("click", stopCamera);
@@ -563,9 +681,9 @@ async function init() {
   $("drive-sign-out").addEventListener("click", () => {
     drive.signOut();
     driveFolderId = null;
-    familyPhotos = [];
-    familyVisible = [];
     renderDriveUI();
+    // ログアウトしても、すでに端末に保存した家族の写真はそのまま見られる。
+    $("family-login-hint").hidden = false;
   });
   $("drive-upload-all").addEventListener("click", uploadAllToDrive);
   $("drive-share-add").addEventListener("click", async () => {

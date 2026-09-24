@@ -165,7 +165,7 @@ function parseAppPropertyTags(file) {
 }
 
 export async function listFamilyPhotos(folderId) {
-  const fields = "files(id,name,description,appProperties,thumbnailLink,createdTime,mimeType,owners(displayName,emailAddress))";
+  const fields = "files(id,name,description,appProperties,thumbnailLink,createdTime,modifiedTime,mimeType,owners(displayName,emailAddress))";
   const query = encodeURIComponent(`'${folderId}' in parents and trashed=false and mimeType contains 'image/'`);
   let files = [];
   let pageToken = "";
@@ -179,19 +179,26 @@ export async function listFamilyPhotos(folderId) {
     id: file.id,
     name: file.name,
     date: file.createdTime,
+    modifiedTime: file.modifiedTime,
     thumbnailLink: file.thumbnailLink,
     owner: file.owners?.[0]?.displayName || file.owners?.[0]?.emailAddress || "",
     tags: parseAppPropertyTags(file),
   }));
 }
 
-export async function fetchThumbnailUrl(thumbnailLink) {
+// thumbnailLinkは小さいサイズ(=s220程度)で終わるURL。末尾の数字を差し替えて、
+// 拡大表示に使える少し大きめの画像を同じ仕組みで取得する。
+export function largeImageUrl(thumbnailLink) {
   if (!thumbnailLink) return null;
+  return /=s\d+$/.test(thumbnailLink) ? thumbnailLink.replace(/=s\d+$/, "=s1024") : thumbnailLink;
+}
+
+export async function fetchImageBlob(url) {
+  if (!url) return null;
   const token = await getToken();
-  const response = await fetch(thumbnailLink, { headers: { Authorization: `Bearer ${token}` } });
+  const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
   if (!response.ok) return null;
-  const blob = await response.blob();
-  return URL.createObjectURL(blob);
+  return response.blob();
 }
 
 export async function listShares(folderId) {

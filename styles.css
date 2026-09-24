@@ -60,9 +60,13 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--blue); outl
 .photos-empty strong { display: block; font-size: 17px; }
 .photos-empty p { margin-top: 8px; font-size: 13.5px; color: var(--sub); line-height: 1.6; }
 
-.family-signed-out { text-align: center; margin: 70px auto; padding: 20px; max-width: 300px; }
-.family-signed-out p { font-size: 13.5px; color: var(--sub); line-height: 1.6; margin-bottom: 16px; }
+.family-login-hint { margin: 0 20px 14px; padding: 12px 14px; background: var(--blue-soft); border-radius: 12px; font-size: 13px; color: var(--sub); line-height: 1.7; }
+.family-login-hint .text-button { display: inline; padding: 0; margin: 0 0 0 4px; font-weight: 600; }
+.family-share-banner { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 20px 14px; padding: 12px 14px; background: #fef7e0; border: 1px solid #fde293; border-radius: 12px; font-size: 13px; color: var(--ink); }
+.family-share-banner .secondary-button { flex: none; padding: 8px 14px; min-height: auto; font-size: 12.5px; }
 .photo-thumb .photo-owner { position: absolute; right: 6px; top: 6px; padding: 3px 8px; border-radius: 999px; background: rgba(32, 33, 36, .6); color: #fff; font-size: 10px; font-weight: 600; backdrop-filter: blur(2px); max-width: calc(100% - 12px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.photo-thumb-unshared { outline: 2px dashed #dadce0; outline-offset: -2px; }
+.photo-thumb .photo-unshared-badge { position: absolute; left: 6px; top: 6px; padding: 3px 8px; border-radius: 999px; background: var(--blue); color: #fff; font-size: 10px; font-weight: 700; }
 
 .settings-card { display: flex; gap: 16px; margin: 0 18px 15px; padding: 20px; background: #ffffff; border: 1px solid var(--line); border-radius: 16px; }
 .settings-card:first-of-type { margin-top: 4px; }
