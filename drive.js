@@ -1,7 +1,9 @@
 const CLIENT_ID_KEY = "travel-photo-map:drive-client-id";
 const FOLDER_ID_KEY = "travel-photo-map:drive-folder-id";
 const FOLDER_NAME = "旅の思い出";
-const SCOPE = "https://www.googleapis.com/auth/drive.file";
+// drive.file: このアプリが作ったファイルの書き込み用。
+// drive.readonly: 家族の箱(共有フォルダ)の中身を、誰がアップロードしたものでも読み取るために必要。
+const SCOPE = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly";
 // OAuthクライアントIDはパスワードなどの機密情報ではなく、公開してよい識別子。
 // 誰の端末でも入力なしでログインできるよう、既定値としてコードに含める。
 // 以前のバージョンで壊れた値をlocalStorageに保存してしまった端末があるため、
@@ -123,6 +125,7 @@ export async function uploadPhoto(folderId, photo) {
     name: buildPhotoFileName(photo),
     parents: [folderId],
     description: tags.length ? `タグ: ${tags.join(", ")}` : "",
+    appProperties: { tags: JSON.stringify(tags) },
   };
   const boundary = `travelphotomap-${photo.id}`;
   const metadataPart = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n`;
@@ -142,8 +145,53 @@ export async function updatePhotoMetadata(photo) {
   await driveFetch(`https://www.googleapis.com/drive/v3/files/${photo.driveId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: buildPhotoFileName(photo), description: tags.length ? `タグ: ${tags.join(", ")}` : "" }),
+    body: JSON.stringify({
+      name: buildPhotoFileName(photo),
+      description: tags.length ? `タグ: ${tags.join(", ")}` : "",
+      appProperties: { tags: JSON.stringify(tags) },
+    }),
   });
+}
+
+function parseAppPropertyTags(file) {
+  try {
+    const raw = file.appProperties?.tags;
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter(tag => typeof tag === "string" && tag) : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function listFamilyPhotos(folderId) {
+  const fields = "files(id,name,description,appProperties,thumbnailLink,createdTime,mimeType,owners(displayName,emailAddress))";
+  const query = encodeURIComponent(`'${folderId}' in parents and trashed=false and mimeType contains 'image/'`);
+  let files = [];
+  let pageToken = "";
+  do {
+    const response = await driveFetch(`https://www.googleapis.com/drive/v3/files?q=${query}&fields=nextPageToken,${fields}&pageSize=200&orderBy=createdTime desc${pageToken ? `&pageToken=${pageToken}` : ""}`);
+    const result = await response.json();
+    files = files.concat(result.files || []);
+    pageToken = result.nextPageToken || "";
+  } while (pageToken);
+  return files.map(file => ({
+    id: file.id,
+    name: file.name,
+    date: file.createdTime,
+    thumbnailLink: file.thumbnailLink,
+    owner: file.owners?.[0]?.displayName || file.owners?.[0]?.emailAddress || "",
+    tags: parseAppPropertyTags(file),
+  }));
+}
+
+export async function fetchThumbnailUrl(thumbnailLink) {
+  if (!thumbnailLink) return null;
+  const token = await getToken();
+  const response = await fetch(thumbnailLink, { headers: { Authorization: `Bearer ${token}` } });
+  if (!response.ok) return null;
+  const blob = await response.blob();
+  return URL.createObjectURL(blob);
 }
 
 export async function listShares(folderId) {
@@ -153,10 +201,11 @@ export async function listShares(folderId) {
 }
 
 export async function shareFolder(folderId, email) {
+  // role: "writer" — 家族も写真を追加できるようにする(見るだけの"reader"ではない)
   await driveFetch(`https://www.googleapis.com/drive/v3/files/${folderId}/permissions?sendNotificationEmail=true`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ type: "user", role: "reader", emailAddress: email }),
+    body: JSON.stringify({ type: "user", role: "writer", emailAddress: email }),
   });
 }
 

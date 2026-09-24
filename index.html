@@ -39,6 +39,21 @@
         <div id="photos-empty" class="photos-empty" hidden><span aria-hidden="true">🖼️</span><strong>まだ写真がありません</strong><p>「写真を撮る」で、最初の1枚を残しましょう。</p></div>
       </section>
 
+      <section id="family-page" class="page" aria-label="家族の写真">
+        <div class="page-heading">
+          <p id="family-count">家族の写真</p>
+        </div>
+        <div id="family-signed-out" class="family-signed-out" hidden>
+          <p>Googleにログインすると、家族が共有した写真が見られます。</p>
+          <button id="family-go-settings" class="action-button">保存タブでログインする</button>
+        </div>
+        <div id="family-signed-in" class="family-signed-in" hidden>
+          <div id="family-tag-filters" class="tag-filter-row" aria-label="タグで家族の写真を絞り込む"></div>
+          <div id="family-grid" class="photo-grid"></div>
+          <div id="family-empty" class="photos-empty" hidden><span aria-hidden="true">👪</span><strong>まだ写真がありません</strong><p>お父さん・お母さんが撮った写真がここに並びます。</p></div>
+        </div>
+      </section>
+
       <section id="settings-page" class="page" aria-label="保存とバックアップ">
         <div class="page-heading"><p>写真はこの端末のアプリ内に保存されています。</p></div>
         <div class="settings-card backup-card"><div class="settings-symbol">↓</div><div><h2>バックアップを保存</h2><p>写真・撮影日時・タグを1つのZIPファイルにまとめます。更新前にも必ず保存してください。</p><button id="backup-button" class="action-button">バックアップを作る</button></div></div>
@@ -49,7 +64,7 @@
           <div class="settings-symbol">☁</div>
           <div class="drive-body">
             <h2>Googleドライブ・家族共有</h2>
-            <p>写真をGoogleドライブにも保存し、指定した家族だけに共有できます。</p>
+            <p>写真をGoogleドライブの家族の箱に保存します。共有した家族はアプリの「家族」タブから、お互いの写真をまとめて見たり、自分でも写真を追加したりできます。</p>
 
             <div id="drive-signed-out" class="drive-block" hidden>
               <button id="drive-sign-in" class="action-button">Googleでログイン</button>
@@ -79,6 +94,10 @@
       <button id="take-photo" class="shoot-button" aria-label="写真を撮る">
         <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 8.5C4 6.6 5.6 5 7.5 5h9C18.4 5 20 6.6 20 8.5v7c0 1.9-1.6 3.5-3.5 3.5h-9C5.6 19 4 17.4 4 15.5v-7Z" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="3.4" stroke="currentColor" stroke-width="1.8"/></svg>
         <span>写真を撮る</span>
+      </button>
+      <button class="nav-button" data-page="family">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="8" cy="9" r="3.2" stroke="currentColor" stroke-width="1.8"/><circle cx="17" cy="9" r="3.2" stroke="currentColor" stroke-width="1.8" opacity=".55"/><path d="M3 19c0-3 2.5-5 5-5s5 2 5 5" stroke="currentColor" stroke-width="1.8"/><path d="M12 19c0-2.7 2-4.6 4.3-4.9" stroke="currentColor" stroke-width="1.8" opacity=".55"/></svg>
+        <span>家族</span>
       </button>
       <button class="nav-button" data-page="settings">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 19v-6.2c0-.6.3-1.2.8-1.6l5.5-4.4a1.6 1.6 0 0 1 2 0l5.5 4.4c.5.4.8 1 .8 1.6V19" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>

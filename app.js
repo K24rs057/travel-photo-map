@@ -222,11 +222,103 @@ async function addCustomTag() {
 }
 
 let driveFolderId = null;
+let familyPhotos = [];
+let familyVisible = [];
+let familyActiveTags = new Set();
+let familyThumbUrls = [];
+let familyLoading = false;
 
 function renderDriveUI() {
   $("drive-signed-out").hidden = drive.isSignedIn();
   $("drive-signed-in").hidden = !drive.isSignedIn();
   if (drive.isSignedIn()) renderShareList();
+}
+
+function renderFamilyTagFilters() {
+  const tags = [...new Set(familyPhotos.flatMap(photo => photo.tags))];
+  for (const tag of [...familyActiveTags]) if (!tags.includes(tag)) familyActiveTags.delete(tag);
+  const row = $("family-tag-filters");
+  row.replaceChildren();
+  if (!tags.length) return;
+  for (const tag of ["", ...tags]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "tag-filter";
+    button.textContent = tag || "すべて";
+    button.setAttribute("aria-pressed", String(tag ? familyActiveTags.has(tag) : familyActiveTags.size === 0));
+    button.addEventListener("click", () => {
+      if (!tag) familyActiveTags.clear();
+      else if (familyActiveTags.has(tag)) familyActiveTags.delete(tag);
+      else familyActiveTags.add(tag);
+      applyFamilyFilter();
+    });
+    row.append(button);
+  }
+}
+
+function applyFamilyFilter() {
+  familyVisible = familyPhotos.filter(photo => {
+    if (familyActiveTags.size === 0) return true;
+    return [...familyActiveTags].every(tag => photo.tags.includes(tag));
+  });
+  $("family-count").textContent = familyPhotos.length ? `${familyVisible.length}枚の写真` : "家族の写真";
+  renderFamilyTagFilters();
+  $("family-empty").hidden = familyVisible.length > 0 || familyLoading;
+  const grid = $("family-grid");
+  grid.replaceChildren();
+  for (const photo of familyVisible) {
+    const button = document.createElement("button");
+    button.className = "photo-thumb";
+    button.disabled = true;
+    if (photo.thumbUrl) {
+      const image = document.createElement("img");
+      image.src = photo.thumbUrl;
+      image.alt = "";
+      button.append(image);
+    }
+    if (photo.owner) {
+      const owner = document.createElement("span");
+      owner.className = "photo-owner";
+      owner.textContent = photo.owner;
+      button.append(owner);
+    }
+    if (photo.tags.length) {
+      const tagList = document.createElement("span");
+      tagList.className = "photo-tags";
+      tagList.textContent = photo.tags.length > 1 ? `${photo.tags[0]} ＋${photo.tags.length - 1}` : photo.tags[0];
+      button.append(tagList);
+    }
+    grid.append(button);
+  }
+}
+
+async function loadFamilyPhotos() {
+  if (!drive.isSignedIn()) {
+    $("family-signed-out").hidden = false;
+    $("family-signed-in").hidden = true;
+    return;
+  }
+  $("family-signed-out").hidden = true;
+  $("family-signed-in").hidden = false;
+  familyLoading = true;
+  $("family-count").textContent = "読み込み中…";
+  try {
+    if (!driveFolderId) driveFolderId = await drive.ensureFolder();
+    const files = await drive.listFamilyPhotos(driveFolderId);
+    for (const url of familyThumbUrls) URL.revokeObjectURL(url);
+    familyThumbUrls = [];
+    familyPhotos = await Promise.all(files.map(async file => {
+      const thumbUrl = await drive.fetchThumbnailUrl(file.thumbnailLink).catch(() => null);
+      if (thumbUrl) familyThumbUrls.push(thumbUrl);
+      return { ...file, thumbUrl };
+    }));
+  } catch (error) {
+    toast(`家族の写真を読み込めませんでした: ${error.message}`);
+    familyPhotos = [];
+  } finally {
+    familyLoading = false;
+    applyFamilyFilter();
+  }
 }
 
 async function uploadPhotoToDrive(photo) {
@@ -441,7 +533,13 @@ async function init() {
     toast(`保存領域を開けませんでした: ${error.message}`);
     return;
   }
-  for (const button of document.querySelectorAll(".nav-button")) button.addEventListener("click", () => showPage(button.dataset.page));
+  for (const button of document.querySelectorAll(".nav-button")) {
+    button.addEventListener("click", () => {
+      showPage(button.dataset.page);
+      if (button.dataset.page === "family") loadFamilyPhotos();
+    });
+  }
+  $("family-go-settings").addEventListener("click", () => showPage("settings"));
   $("take-photo").addEventListener("click", openCamera);
   $("shutter").addEventListener("click", takePhoto);
   $("camera-close").addEventListener("click", stopCamera);
@@ -462,7 +560,13 @@ async function init() {
   $("restore-button").addEventListener("click", () => $("restore-input").click());
   $("restore-input").addEventListener("change", async event => { await restoreBackup(event.target.files[0]); event.target.value = ""; });
   $("drive-sign-in").addEventListener("click", driveSignIn);
-  $("drive-sign-out").addEventListener("click", () => { drive.signOut(); driveFolderId = null; renderDriveUI(); });
+  $("drive-sign-out").addEventListener("click", () => {
+    drive.signOut();
+    driveFolderId = null;
+    familyPhotos = [];
+    familyVisible = [];
+    renderDriveUI();
+  });
   $("drive-upload-all").addEventListener("click", uploadAllToDrive);
   $("drive-share-add").addEventListener("click", async () => {
     const input = $("drive-share-email");
