@@ -237,9 +237,16 @@ let familyDetailItem = null;
 let lastFamilyMeta = [];
 
 function renderDriveUI() {
+  $("drive-checking").hidden = true;
   $("drive-signed-out").hidden = drive.isSignedIn();
   $("drive-signed-in").hidden = !drive.isSignedIn();
   if (drive.isSignedIn()) renderShareList();
+}
+
+function showDriveChecking() {
+  $("drive-checking").hidden = false;
+  $("drive-signed-out").hidden = true;
+  $("drive-signed-in").hidden = true;
 }
 
 function renderFamilyTagFilters() {
@@ -693,7 +700,19 @@ async function init() {
     try { await drive.shareFolder(driveFolderId, email); input.value = ""; renderShareList(); toast(`${email}に共有しました`); }
     catch (error) { toast(`共有できませんでした: ${error.message}`); }
   });
-  renderDriveUI();
+  if (drive.isConfigured()) {
+    showDriveChecking();
+    drive.restoreSession().then(restored => {
+      renderDriveUI();
+      if (restored) {
+        $("drive-status").textContent = "Googleドライブにログイン中です。";
+        $("family-login-hint").hidden = true;
+        loadFamilyPhotos();
+      }
+    });
+  } else {
+    renderDriveUI();
+  }
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" }).then(registration => {
       registration.update().catch(() => {});

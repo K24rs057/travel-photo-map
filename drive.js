@@ -1,5 +1,7 @@
 const CLIENT_ID_KEY = "travel-photo-map:drive-client-id";
 const FOLDER_ID_KEY = "travel-photo-map:drive-folder-id";
+// 「以前ログインしたことがある」という印だけを保存する(アクセス権そのものは保存しない)。
+const WAS_SIGNED_IN_KEY = "travel-photo-map:drive-was-signed-in";
 const FOLDER_NAME = "旅の思い出";
 // drive.file: このアプリが作ったファイルの書き込み用。
 // drive.readonly: 家族の箱(共有フォルダ)の中身を、誰がアップロードしたものでも読み取るために必要。
@@ -62,10 +64,40 @@ export async function signIn() {
       if (response.error) return reject(new Error("Googleへのログインに失敗しました。"));
       accessToken = response.access_token;
       accessTokenExpiry = Date.now() + (Number(response.expires_in) || 3000) * 1000;
+      try { localStorage.setItem(WAS_SIGNED_IN_KEY, "1"); } catch {}
       resolve(accessToken);
     };
     client.requestAccessToken({ prompt: isSignedIn() ? "" : "consent" });
   });
+}
+
+// 起動時に呼ぶ、確認画面なしでのログイン復元。
+// 「以前ログインしたことがある」印がある場合だけ試す。ブラウザ自体がまだそのGoogleアカウントに
+// ログインしたままなら、ボタンを押さなくても一瞬で復元できる。切れていれば静かに失敗するだけ
+// (エラーではない)。
+export async function restoreSession() {
+  let wasSignedIn = false;
+  try { wasSignedIn = localStorage.getItem(WAS_SIGNED_IN_KEY) === "1"; } catch {}
+  if (!wasSignedIn || isSignedIn()) return isSignedIn();
+  try {
+    const client = await ensureTokenClient();
+    const attempt = new Promise(resolve => {
+      client.callback = response => {
+        if (response.error) return resolve(false);
+        accessToken = response.access_token;
+        accessTokenExpiry = Date.now() + (Number(response.expires_in) || 3000) * 1000;
+        resolve(true);
+      };
+      client.requestAccessToken({ prompt: "" });
+    });
+    // Googleがブラウザのログイン状態を持っていない場合、確認画面なしのログインは
+    // コールバックが一度も呼ばれずに固まることがある。その場合はタイムアウトで
+    // 諦めて、いつも通りのログインボタンに戻す(壊れたままにしない)。
+    const timeout = new Promise(resolve => setTimeout(() => resolve(false), 4000));
+    return await Promise.race([attempt, timeout]);
+  } catch {
+    return false;
+  }
 }
 
 export function signOut() {
@@ -74,6 +106,7 @@ export function signOut() {
   }
   accessToken = null;
   accessTokenExpiry = 0;
+  try { localStorage.removeItem(WAS_SIGNED_IN_KEY); } catch {}
 }
 
 async function getToken() {

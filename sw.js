@@ -1,4 +1,4 @@
-const CACHE = "travel-photo-map-v13";
+const CACHE = "travel-photo-map-v14";
 const BASE = new URL("./", self.location.href);
 const SHELL = ["./", "./index.html", "./styles.css", "./app.js", "./db.js", "./exif.js", "./archive.js", "./drive.js", "./family-sync.js", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png"].map(path => new URL(path, BASE).href);
 
