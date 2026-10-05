@@ -186,6 +186,15 @@ export async function updatePhotoMetadata(photo) {
   });
 }
 
+// 完全削除ではなくドライブのゴミ箱に移す(ゴミ箱から戻せる)
+export async function trashFile(fileId) {
+  await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ trashed: true }),
+  });
+}
+
 function parseAppPropertyTags(file) {
   try {
     const raw = file.appProperties?.tags;

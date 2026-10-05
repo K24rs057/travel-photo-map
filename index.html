@@ -27,7 +27,10 @@
       <section id="photos-page" class="page active" aria-label="写真一覧">
         <div class="page-heading">
           <p id="photos-count">写真を撮って残しましょう</p>
-          <button id="filter-toggle" class="filter-button" aria-expanded="false">日付で絞り込む</button>
+          <div class="heading-actions">
+            <button id="select-toggle" class="filter-button" aria-pressed="false">選択</button>
+            <button id="filter-toggle" class="filter-button" aria-expanded="false">日付で絞り込む</button>
+          </div>
         </div>
         <div id="photos-tag-filters" class="tag-filter-row" aria-label="タグで写真を絞り込む"></div>
         <div id="filter-panel" class="filter-panel" hidden>
@@ -89,6 +92,11 @@
       </section>
     </main>
 
+    <div id="select-bar" class="select-bar">
+      <span id="select-count">0枚を選択中</span>
+      <button id="select-delete" class="danger-button" disabled>削除</button>
+    </div>
+
     <nav class="bottom-nav" aria-label="メインメニュー">
       <button class="nav-button active" data-page="photos" aria-current="page">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5" fill="currentColor"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5" fill="currentColor" opacity=".45"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5" fill="currentColor" opacity=".45"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5" fill="currentColor" opacity=".45"/></svg>
@@ -130,6 +138,37 @@
         <h3>タグ</h3>
         <div id="detail-tags" class="detail-tags" aria-label="写真につけるタグ"></div>
         <div class="custom-tag-row"><input id="custom-tag" type="text" maxlength="20" placeholder="好きなタグを入力" aria-label="新しいタグ"><button id="add-custom-tag" type="button">追加</button></div>
+      </div>
+      <button id="detail-delete" class="danger-outline-button" type="button">この写真を削除</button>
+    </div>
+  </dialog>
+
+  <dialog id="tag-manage-dialog" class="photo-dialog">
+    <span class="sheet-handle" aria-hidden="true"></span>
+    <div class="dialog-header"><h2>タグ管理</h2><button id="tag-manage-close" class="close-button" aria-label="閉じる">×</button></div>
+    <div class="detail-body">
+      <p class="manage-note">自分で作ったタグの名前を変えたり、消したりできます。写真は消えません。</p>
+      <h3 class="manage-label">自分で作ったタグ</h3>
+      <div id="tag-manage-custom"></div>
+      <h3 class="manage-label">初期タグ(変更できません)</h3>
+      <div id="tag-manage-default"></div>
+    </div>
+  </dialog>
+
+  <dialog id="delete-dialog" class="photo-dialog">
+    <span class="sheet-handle" aria-hidden="true"></span>
+    <div class="dialog-header"><h2 id="delete-title">写真を削除しますか?</h2></div>
+    <div class="detail-body delete-body">
+      <p id="delete-lead"></p>
+      <div id="delete-drive-options" hidden>
+        <p id="delete-drive-lead"></p>
+        <label class="delete-option"><input type="radio" name="delete-mode" value="local" checked><span><b>この端末だけ消す</b><small>ドライブには残ります。家族の「家族」タブにも残ります。</small></span></label>
+        <label class="delete-option"><input type="radio" name="delete-mode" value="trash"><span><b>ドライブのゴミ箱にも移す</b><small>家族からも見えなくなります。ゴミ箱から戻せます。</small></span></label>
+      </div>
+      <p class="delete-warn">削除の前に、「保存」タブでバックアップZIPを作っておくと安心です。</p>
+      <div class="delete-actions">
+        <button id="delete-cancel" class="secondary-button" type="button">キャンセル</button>
+        <button id="delete-ok" class="danger-button" type="button">削除する</button>
       </div>
     </div>
   </dialog>

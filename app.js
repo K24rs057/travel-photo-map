@@ -1,4 +1,5 @@
-import { openDatabase, allPhotos, getPhoto, putPhoto, putMany, photoId, allFamilyPhotos, putManyFamily, deleteFamilyPhotos } from "./db.js";
+import { openDatabase, allPhotos, getPhoto, putPhoto, putMany, photoId, deletePhotos, allFamilyPhotos, putManyFamily, deleteFamilyPhotos } from "./db.js";
+import { renameTagInPhotos, removeTagFromPhotos, renameInList, removeFromList, countTag, manageableTags } from "./tag-edit.js";
 import { readPhotoExif } from "./exif.js";
 import { makeBackup, readBackup } from "./archive.js";
 import { diffFamilySync, annotateShareStatus, buildFamilyView } from "./family-sync.js";
@@ -13,6 +14,9 @@ let db;
 let photos = [];
 let visiblePhotos = [];
 let activeTags = new Set();
+let selecting = false;
+const pickedIds = new Set();
+let pendingDeleteIds = [];
 let thumbUrls = [];
 let detailUrl = null;
 let activeId = null;
@@ -107,6 +111,7 @@ async function refresh() {
     photo.thumbUrl = url;
     thumbUrls.push(url);
   }
+  for (const id of [...pickedIds]) if (!photos.some(photo => photo.id === id)) pickedIds.delete(id);
   applyFilter();
   renderFamilyFromCache();
   $("storage-note").textContent = `${photos.length}枚の写真をこの端末に保存中。機種変更の前にはバックアップを作ってください。`;
@@ -130,8 +135,8 @@ function applyFilter() {
   grid.replaceChildren();
   for (const photo of visiblePhotos) {
     const button = document.createElement("button");
-    button.className = "photo-thumb";
-    button.setAttribute("aria-label", `${prettyDate(photo.date)}の写真を開く`);
+    button.className = `photo-thumb${pickedIds.has(photo.id) ? " photo-selected" : ""}`;
+    button.setAttribute("aria-label", `${prettyDate(photo.date)}の写真を${selecting ? "選ぶ" : "開く"}`);
     const image = document.createElement("img");
     image.src = photo.thumbUrl;
     image.alt = "";
@@ -143,9 +148,41 @@ function applyFilter() {
       tagList.textContent = tags.length > 1 ? `${tags[0]} ＋${tags.length - 1}` : tags[0];
       button.append(tagList);
     }
-    button.addEventListener("click", () => showPhoto(photo.id));
+    if (photo.driveId) {
+      const cloud = document.createElement("span");
+      cloud.className = "photo-cloud";
+      cloud.textContent = "☁";
+      cloud.title = "ドライブにアップロード済み";
+      button.append(cloud);
+    }
+    const check = document.createElement("span");
+    check.className = "photo-check";
+    check.textContent = pickedIds.has(photo.id) ? "✓" : "";
+    button.append(check);
+    button.addEventListener("click", () => selecting ? togglePicked(photo.id) : showPhoto(photo.id));
     grid.append(button);
   }
+  updateSelectBar();
+}
+
+function updateSelectBar() {
+  document.querySelector(".app-shell").classList.toggle("selecting", selecting);
+  $("select-toggle").textContent = selecting ? "完了" : "選択";
+  $("select-toggle").setAttribute("aria-pressed", String(selecting));
+  $("select-count").textContent = `${pickedIds.size}枚を選択中`;
+  $("select-delete").disabled = pickedIds.size === 0;
+  $("select-delete").textContent = pickedIds.size ? `削除(${pickedIds.size}枚)` : "削除";
+}
+
+function setSelecting(on) {
+  selecting = on;
+  pickedIds.clear();
+  applyFilter();
+}
+
+function togglePicked(id) {
+  if (pickedIds.has(id)) pickedIds.delete(id); else pickedIds.add(id);
+  applyFilter();
 }
 
 function renderTagFilters() {
@@ -174,6 +211,12 @@ function renderTagFilters() {
   addButton.setAttribute("aria-label", "新しいタグを追加");
   addButton.addEventListener("click", () => createTag(prompt("新しいタグの名前を入力してください")));
   row.append(addButton);
+  const manageButton = document.createElement("button");
+  manageButton.type = "button";
+  manageButton.className = "tag-filter tag-filter-manage";
+  manageButton.textContent = "タグ管理";
+  manageButton.addEventListener("click", openTagManage);
+  row.append(manageButton);
 }
 
 function renderDetailTags(photo) {
@@ -222,6 +265,200 @@ async function addCustomTag() {
   }
   await togglePhotoTag(photo.id, tag, true);
   input.value = "";
+}
+
+let manageEditingTag = null;
+let manageConfirmTag = null;
+
+async function applyTagPatches(patches) {
+  const changed = [];
+  for (const patch of patches) {
+    const photo = photos.find(item => item.id === patch.id);
+    if (!photo) continue;
+    photo.tags = patch.tags;
+    await persistPhotoRecord(photo);
+    changed.push(photo);
+  }
+  applyFilter();
+  renderFamilyFromCache();
+  (async () => { for (const photo of changed) await syncTagsToDrive(photo); })();
+}
+
+function openTagManage() {
+  manageEditingTag = null;
+  manageConfirmTag = null;
+  renderTagManage();
+  $("tag-manage-dialog").showModal();
+}
+
+function manageButton(label, className, onClick) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = className;
+  button.textContent = label;
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+function renderTagManage() {
+  const custom = $("tag-manage-custom");
+  custom.replaceChildren();
+  const tags = manageableTags(DEFAULT_TAGS, customTags, photos);
+  if (!tags.length) {
+    const empty = document.createElement("p");
+    empty.className = "manage-empty";
+    empty.textContent = "自分で作ったタグはありません。";
+    custom.append(empty);
+  }
+  for (const tag of tags) {
+    const row = document.createElement("div");
+    row.className = "manage-row";
+    if (manageEditingTag === tag) {
+      const input = document.createElement("input");
+      input.value = tag;
+      input.maxLength = 20;
+      input.setAttribute("aria-label", "新しいタグ名");
+      const save = async () => { if (await renameTag(tag, input.value)) { manageEditingTag = null; renderTagManage(); } };
+      input.addEventListener("keydown", event => { if (event.key === "Enter") save(); });
+      row.append(input, manageButton("保存", "mini-button", save), manageButton("戻す", "mini-button", () => { manageEditingTag = null; renderTagManage(); }));
+      custom.append(row);
+      setTimeout(() => { input.focus(); input.select(); }, 0);
+      continue;
+    }
+    const name = document.createElement("span");
+    name.className = "manage-name";
+    name.textContent = tag;
+    const count = document.createElement("span");
+    count.className = "manage-count";
+    count.textContent = `${countTag(photos, tag)}枚`;
+    row.append(
+      name,
+      count,
+      manageButton("名前変更", "mini-button", () => { manageEditingTag = tag; manageConfirmTag = null; renderTagManage(); }),
+      manageButton("削除", "mini-button mini-danger", () => { manageConfirmTag = manageConfirmTag === tag ? null : tag; manageEditingTag = null; renderTagManage(); }),
+    );
+    custom.append(row);
+    if (manageConfirmTag === tag) {
+      const used = countTag(photos, tag);
+      const box = document.createElement("div");
+      box.className = "manage-confirm";
+      const message = document.createElement("span");
+      const strong = document.createElement("b");
+      strong.textContent = `「${tag}」を削除します。`;
+      message.append(strong, document.createTextNode(used ? `${used}枚の写真からこのタグが外れます。写真は消えません。` : "付いている写真はありません。"));
+      const actions = document.createElement("div");
+      actions.className = "row-actions";
+      actions.append(
+        manageButton("やめる", "secondary-button", () => { manageConfirmTag = null; renderTagManage(); }),
+        manageButton("タグを削除", "danger-button", () => deleteTag(tag)),
+      );
+      box.append(message, actions);
+      custom.append(box);
+    }
+  }
+  const defaults = $("tag-manage-default");
+  defaults.replaceChildren();
+  for (const tag of DEFAULT_TAGS) {
+    const row = document.createElement("div");
+    row.className = "manage-row";
+    const name = document.createElement("span");
+    name.className = "manage-name";
+    name.textContent = tag;
+    const count = document.createElement("span");
+    count.className = "manage-count";
+    count.textContent = `${countTag(photos, tag)}枚`;
+    const lock = document.createElement("span");
+    lock.className = "manage-lock";
+    lock.textContent = "🔒 固定";
+    row.append(name, count, lock);
+    defaults.append(row);
+  }
+}
+
+async function renameTag(from, rawName) {
+  const name = (rawName || "").trim();
+  if (!name || name === from) return true;
+  if (name.length > 20) { toast("タグは20文字以内で入力してください"); return false; }
+  if (DEFAULT_TAGS.includes(name)) { toast("初期タグと同じ名前にはできません"); return false; }
+  const merged = manageableTags(DEFAULT_TAGS, customTags, photos).includes(name);
+  await applyTagPatches(renameTagInPhotos(photos, from, name, MAX_TAGS_PER_PHOTO));
+  customTags = renameInList(customTags, from, name);
+  saveCustomTags(customTags);
+  if (activeTags.delete(from)) activeTags.add(name);
+  applyFilter();
+  toast(merged ? `「${from}」を「${name}」に統合しました` : `「${from}」を「${name}」に変えました`);
+  return true;
+}
+
+async function deleteTag(tag) {
+  await applyTagPatches(removeTagFromPhotos(photos, tag));
+  customTags = removeFromList(customTags, tag);
+  saveCustomTags(customTags);
+  activeTags.delete(tag);
+  manageConfirmTag = null;
+  applyFilter();
+  renderTagManage();
+  toast(`「${tag}」を削除しました`);
+}
+
+function askDelete(ids) {
+  const targets = photos.filter(photo => ids.includes(photo.id));
+  if (!targets.length) return;
+  pendingDeleteIds = targets.map(photo => photo.id);
+  const uploaded = targets.filter(photo => photo.driveId).length;
+  $("delete-title").textContent = targets.length === 1 ? "この写真を削除しますか?" : `${targets.length}枚の写真を削除しますか?`;
+  $("delete-lead").textContent = "この端末のアプリから写真が消えます。";
+  $("delete-drive-options").hidden = uploaded === 0;
+  $("delete-drive-lead").textContent = `このうち${uploaded}枚はGoogleドライブにアップロード済みです。どうしますか?`;
+  document.querySelector('input[name="delete-mode"][value="local"]').checked = true;
+  $("delete-ok").disabled = false;
+  $("delete-dialog").showModal();
+}
+
+async function confirmDelete() {
+  const targets = photos.filter(photo => pendingDeleteIds.includes(photo.id));
+  const mode = document.querySelector('input[name="delete-mode"]:checked').value;
+  const uploaded = targets.filter(photo => photo.driveId);
+  if (mode === "trash" && uploaded.length && !drive.isSignedIn()) {
+    return toast("ドライブのゴミ箱に移すには、「保存」タブでGoogleにログインしてください");
+  }
+  $("delete-ok").disabled = true;
+  const removable = [];
+  const trashedDriveIds = [];
+  let failed = 0;
+  for (const photo of targets) {
+    if (mode === "trash" && photo.driveId) {
+      try {
+        await drive.trashFile(photo.driveId);
+        trashedDriveIds.push(photo.driveId);
+      } catch {
+        failed++;
+        continue;
+      }
+    }
+    removable.push(photo.id);
+  }
+  try {
+    await deletePhotos(db, removable);
+    if (trashedDriveIds.length) {
+      await deleteFamilyPhotos(db, trashedDriveIds);
+      familyRecords = familyRecords.filter(record => !trashedDriveIds.includes(record.id));
+      lastFamilyMeta = lastFamilyMeta.filter(meta => !trashedDriveIds.includes(meta.id));
+    }
+  } catch (error) {
+    $("delete-ok").disabled = false;
+    return toast(`削除できませんでした: ${error.message}`);
+  }
+  selecting = false;
+  pickedIds.clear();
+  pendingDeleteIds = [];
+  $("delete-dialog").close();
+  if ($("photo-dialog").open) closePhoto();
+  await refresh();
+  const parts = [`${removable.length}枚を削除しました`];
+  if (trashedDriveIds.length) parts.push(`(ドライブのゴミ箱に${trashedDriveIds.length}枚)`);
+  if (failed) parts.push(`。${failed}枚はドライブで削除できず、残しています`);
+  toast(parts.join(""));
 }
 
 let driveFolderId = null;
@@ -674,6 +911,12 @@ async function init() {
   $("import-input").addEventListener("change", async event => { await importFiles([...event.target.files]); event.target.value = ""; });
   $("fallback-camera-input").addEventListener("change", async event => { await importFiles([...event.target.files]); event.target.value = ""; });
   $("filter-toggle").addEventListener("click", () => { const panel = $("filter-panel"); panel.hidden = !panel.hidden; $("filter-toggle").setAttribute("aria-expanded", String(!panel.hidden)); });
+  $("select-toggle").addEventListener("click", () => setSelecting(!selecting));
+  $("select-delete").addEventListener("click", () => askDelete([...pickedIds]));
+  $("detail-delete").addEventListener("click", () => { if (activeId) askDelete([activeId]); });
+  $("delete-cancel").addEventListener("click", () => $("delete-dialog").close());
+  $("delete-ok").addEventListener("click", confirmDelete);
+  $("tag-manage-close").addEventListener("click", () => $("tag-manage-dialog").close());
   $("date-from").addEventListener("change", applyFilter);
   $("date-to").addEventListener("change", applyFilter);
   $("filter-clear").addEventListener("click", () => { $("date-from").value = ""; $("date-to").value = ""; activeTags.clear(); applyFilter(); });

@@ -56,6 +56,16 @@ export async function putMany(db, records) {
   });
 }
 
+export async function deletePhotos(db, ids) {
+  if (!ids.length) return;
+  const tx = db.transaction(STORE, "readwrite");
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    for (const id of ids) tx.objectStore(STORE).delete(id);
+  });
+}
+
 export function photoId() {
   return crypto.randomUUID();
 }
