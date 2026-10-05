@@ -207,7 +207,7 @@ function parseAppPropertyTags(file) {
 }
 
 export async function listFamilyPhotos(folderId) {
-  const fields = "files(id,name,description,appProperties,thumbnailLink,createdTime,modifiedTime,mimeType,owners(displayName,emailAddress))";
+  const fields = "files(id,name,description,appProperties,thumbnailLink,createdTime,modifiedTime,mimeType,ownedByMe,capabilities(canTrash),owners(displayName,emailAddress))";
   const query = encodeURIComponent(`'${folderId}' in parents and trashed=false and mimeType contains 'image/'`);
   let files = [];
   let pageToken = "";
@@ -224,8 +224,23 @@ export async function listFamilyPhotos(folderId) {
     modifiedTime: file.modifiedTime,
     thumbnailLink: file.thumbnailLink,
     owner: file.owners?.[0]?.displayName || file.owners?.[0]?.emailAddress || "",
+    ownedByMe: Boolean(file.ownedByMe),
+    canTrash: Boolean(file.capabilities?.canTrash),
     tags: parseAppPropertyTags(file),
   }));
+}
+
+// thumbnailLinkは別ドメインの画像で、鍵(Authorization)付きで取りに行くとブラウザに断られる。
+// ドライブの正式な窓口(alt=media)から写真そのものを受け取り、縮小はアプリ側で行う。
+export async function fetchFileBlob(fileId) {
+  const response = await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
+  return response.blob();
+}
+
+export async function getUserEmail() {
+  const response = await driveFetch("https://www.googleapis.com/drive/v3/about?fields=user(emailAddress)");
+  const result = await response.json();
+  return result.user?.emailAddress || "";
 }
 
 // thumbnailLinkは小さいサイズ(=s220程度)で終わるURL。末尾の数字を差し替えて、

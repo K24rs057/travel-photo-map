@@ -75,7 +75,7 @@ async function persistPhotoRecord(photo) {
   await putPhoto(db, record);
 }
 
-async function makeThumbnail(blob) {
+async function makeThumbnail(blob, maxSize = 360, quality = 0.77) {
   let image;
   let url;
   try {
@@ -84,11 +84,11 @@ async function makeThumbnail(blob) {
     image.src = url;
     await image.decode();
     const canvas = document.createElement("canvas");
-    const scale = Math.min(1, 360 / Math.max(image.naturalWidth, image.naturalHeight));
+    const scale = Math.min(1, maxSize / Math.max(image.naturalWidth, image.naturalHeight));
     canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
     canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
     canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
-    return await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.77));
+    return await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", quality));
   } catch {
     return null;
   } finally {
@@ -152,7 +152,7 @@ function applyFilter() {
       const cloud = document.createElement("span");
       cloud.className = "photo-cloud";
       cloud.textContent = "☁";
-      cloud.title = "ドライブにアップロード済み";
+      cloud.title = "家族に共有済み";
       button.append(cloud);
     }
     const check = document.createElement("span");
@@ -409,7 +409,7 @@ function askDelete(ids) {
   $("delete-title").textContent = targets.length === 1 ? "この写真を削除しますか?" : `${targets.length}枚の写真を削除しますか?`;
   $("delete-lead").textContent = "この端末のアプリから写真が消えます。";
   $("delete-drive-options").hidden = uploaded === 0;
-  $("delete-drive-lead").textContent = `このうち${uploaded}枚はGoogleドライブにアップロード済みです。どうしますか?`;
+  $("delete-drive-lead").textContent = `このうち${uploaded}枚は家族に共有済みです。どうしますか?`;
   document.querySelector('input[name="delete-mode"][value="local"]').checked = true;
   $("delete-ok").disabled = false;
   $("delete-dialog").showModal();
@@ -420,7 +420,7 @@ async function confirmDelete() {
   const mode = document.querySelector('input[name="delete-mode"]:checked').value;
   const uploaded = targets.filter(photo => photo.driveId);
   if (mode === "trash" && uploaded.length && !drive.isSignedIn()) {
-    return toast("ドライブのゴミ箱に移すには、「保存」タブでGoogleにログインしてください");
+    return toast("家族のアルバムからも消すには、「保存」タブでGoogleにログインしてください");
   }
   $("delete-ok").disabled = true;
   const removable = [];
@@ -456,8 +456,8 @@ async function confirmDelete() {
   if ($("photo-dialog").open) closePhoto();
   await refresh();
   const parts = [`${removable.length}枚を削除しました`];
-  if (trashedDriveIds.length) parts.push(`(ドライブのゴミ箱に${trashedDriveIds.length}枚)`);
-  if (failed) parts.push(`。${failed}枚はドライブで削除できず、残しています`);
+  if (trashedDriveIds.length) parts.push(`(家族のアルバムからも${trashedDriveIds.length}枚)`);
+  if (failed) parts.push(`。${failed}枚は家族のアルバムから消せなかったため、残しています`);
   toast(parts.join(""));
 }
 
@@ -467,11 +467,17 @@ let familyView = [];
 let familyVisible = [];
 let familyActiveTags = new Set();
 let familyUnsharedOnly = false;
+let familyOwnerFilter = null;
 let familyThumbUrls = [];
 let familySyncing = false;
 let familyDetailUrl = null;
 let familyDetailItem = null;
 let lastFamilyMeta = [];
+
+function showSignedInStatus() {
+  $("drive-status").textContent = "ログイン中です。";
+  drive.getUserEmail().then(email => { if (email) $("drive-status").textContent = `ログイン中: ${email}`; }).catch(() => {});
+}
 
 function renderDriveUI() {
   $("drive-checking").hidden = true;
@@ -498,6 +504,19 @@ function renderFamilyTagFilters() {
   unsharedButton.setAttribute("aria-pressed", String(familyUnsharedOnly));
   unsharedButton.addEventListener("click", () => { familyUnsharedOnly = !familyUnsharedOnly; applyFamilyFilter(); });
   row.append(unsharedButton);
+  const owners = [...new Set(familyView.map(ownerLabel).filter(Boolean))];
+  if (familyOwnerFilter && !owners.includes(familyOwnerFilter)) familyOwnerFilter = null;
+  if (owners.length > 1) {
+    for (const owner of owners) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "tag-filter";
+      button.textContent = owner;
+      button.setAttribute("aria-pressed", String(familyOwnerFilter === owner));
+      button.addEventListener("click", () => { familyOwnerFilter = familyOwnerFilter === owner ? null : owner; applyFamilyFilter(); });
+      row.append(button);
+    }
+  }
   if (!tags.length) return;
   for (const tag of ["", ...tags]) {
     const button = document.createElement("button");
@@ -515,13 +534,18 @@ function renderFamilyTagFilters() {
   }
 }
 
+function ownerLabel(item) {
+  return item.mine ? "あなた" : item.owner || "";
+}
+
 function applyFamilyFilter() {
   familyVisible = familyView.filter(item => {
     if (familyUnsharedOnly && item.shared) return false;
+    if (familyOwnerFilter && ownerLabel(item) !== familyOwnerFilter) return false;
     if (familyActiveTags.size === 0) return true;
     return [...familyActiveTags].every(tag => item.tags.includes(tag));
   });
-  $("family-count").textContent = familyView.length ? `${familyVisible.length}枚の写真` : "家族の写真";
+  $("family-count").textContent = familyView.length ? `家族のアルバム ${familyVisible.length}枚` : "家族のアルバム";
   renderFamilyTagFilters();
   $("family-empty").hidden = familyVisible.length > 0 || familySyncing;
 
@@ -557,10 +581,10 @@ function applyFamilyFilter() {
       badge.textContent = "未共有";
       button.append(badge);
     }
-    if (item.owner) {
+    if (ownerLabel(item)) {
       const owner = document.createElement("span");
-      owner.className = "photo-owner";
-      owner.textContent = item.owner;
+      owner.className = `photo-owner${item.mine ? " photo-owner-me" : ""}`;
+      owner.textContent = ownerLabel(item);
       button.append(owner);
     }
     if (item.tags.length) {
@@ -603,9 +627,17 @@ async function syncFamilyPhotos() {
     if (toRemove.length) await deleteFamilyPhotos(db, toRemove);
     const fetched = [];
     for (const file of toFetch) {
-      const thumb = await drive.fetchImageBlob(file.thumbnailLink).catch(() => null);
-      const full = await drive.fetchImageBlob(drive.largeImageUrl(file.thumbnailLink)).catch(() => null);
-      fetched.push({ id: file.id, date: file.date, modifiedTime: file.modifiedTime, tags: file.tags, owner: file.owner, thumb, full });
+      const original = await drive.fetchFileBlob(file.id).catch(() => null);
+      const thumb = original ? await makeThumbnail(original) : null;
+      const full = original ? await makeThumbnail(original, 1600, 0.85) : null;
+      fetched.push({ id: file.id, date: file.date, modifiedTime: file.modifiedTime, tags: file.tags, owner: file.owner, ownedByMe: file.ownedByMe, canTrash: file.canTrash, thumb, full });
+    }
+    const fetchIds = new Set(toFetch.map(file => file.id));
+    const localById = new Map(familyRecords.map(record => [record.id, record]));
+    for (const file of remoteMeta) {
+      const local = localById.get(file.id);
+      if (fetchIds.has(file.id) || !local) continue;
+      if (local.canTrash !== file.canTrash || local.ownedByMe !== file.ownedByMe) fetched.push({ ...local, ownedByMe: file.ownedByMe, canTrash: file.canTrash });
     }
     if (fetched.length) await putManyFamily(db, fetched);
     familyRecords = await allFamilyPhotos(db);
@@ -625,7 +657,7 @@ function openFamilyPhoto(item) {
   familyDetailUrl = blob ? URL.createObjectURL(blob) : null;
   $("family-detail-image").src = familyDetailUrl || "";
   $("family-detail-date").textContent = prettyDate(item.date);
-  $("family-detail-owner").textContent = item.own ? "あなたの写真" : item.owner ? `撮影: ${item.owner}` : "";
+  $("family-detail-owner").textContent = item.mine ? "あなたの写真" : item.owner ? `撮影: ${item.owner}` : "";
   const tags = $("family-detail-tags");
   tags.replaceChildren();
   for (const tag of item.tags) {
@@ -635,7 +667,37 @@ function openFamilyPhoto(item) {
     tags.append(chip);
   }
   $("family-detail-share").hidden = item.shared;
+  $("family-detail-delete").hidden = !(item.shared && item.canTrash);
+  $("family-detail-lock").hidden = !(item.shared && !item.canTrash);
+  $("family-detail-lock").textContent = `${item.owner || "家族"}が共有した写真です。削除できるのは共有した本人だけです。`;
   $("family-photo-dialog").showModal();
+}
+
+async function deleteFamilyDetailPhoto() {
+  const item = familyDetailItem;
+  if (!item?.shared || !item.canTrash) return;
+  if (!drive.isSignedIn()) return toast("削除するには、「保存」タブでGoogleにログインしてください");
+  $("family-delete-ok").disabled = true;
+  try {
+    await drive.trashFile(item.id);
+    await deleteFamilyPhotos(db, [item.id]);
+    familyRecords = familyRecords.filter(record => record.id !== item.id);
+    lastFamilyMeta = lastFamilyMeta.filter(meta => meta.id !== item.id);
+    const local = photos.find(photo => photo.driveId === item.id);
+    if (local) {
+      delete local.driveId;
+      await persistPhotoRecord(local);
+    }
+    $("family-delete-dialog").close();
+    closeFamilyPhoto();
+    applyFilter();
+    renderFamilyFromCache();
+    toast("家族のアルバムから削除しました");
+  } catch (error) {
+    toast(`削除できませんでした: ${error.message}`);
+  } finally {
+    $("family-delete-ok").disabled = false;
+  }
 }
 
 function closeFamilyPhoto() {
@@ -743,7 +805,7 @@ async function driveSignIn() {
   try {
     await drive.signIn();
     driveFolderId = await drive.ensureFolder();
-    $("drive-status").textContent = "Googleドライブにログイン中です。";
+    showSignedInStatus();
     renderDriveUI();
   } catch (error) { toast(`ログインできませんでした: ${error.message}`); }
 }
@@ -902,6 +964,9 @@ async function init() {
   $("family-photo-close").addEventListener("click", closeFamilyPhoto);
   $("family-photo-dialog").addEventListener("close", () => { if (familyDetailUrl) { URL.revokeObjectURL(familyDetailUrl); familyDetailUrl = null; } familyDetailItem = null; });
   $("family-detail-share").addEventListener("click", shareFamilyDetailPhoto);
+  $("family-detail-delete").addEventListener("click", () => $("family-delete-dialog").showModal());
+  $("family-delete-cancel").addEventListener("click", () => $("family-delete-dialog").close());
+  $("family-delete-ok").addEventListener("click", deleteFamilyDetailPhoto);
   $("take-photo").addEventListener("click", openCamera);
   $("shutter").addEventListener("click", takePhoto);
   $("camera-close").addEventListener("click", stopCamera);
@@ -948,7 +1013,7 @@ async function init() {
     drive.restoreSession().then(restored => {
       renderDriveUI();
       if (restored) {
-        $("drive-status").textContent = "Googleドライブにログイン中です。";
+        showSignedInStatus();
         $("family-login-hint").hidden = true;
         loadFamilyPhotos();
       }

@@ -4,13 +4,13 @@
 
 // remoteMeta: drive.listFamilyPhotos()が返す配列(id, modifiedTime など)
 // localRecords: db.allFamilyPhotos()が返す配列(前回の同期で保存した内容)
-// 新規・更新が必要なものはtoFetchへ、家族の箱から消えた(または権限がなくなった)ものはtoRemoveへ。
+// 新規・更新が必要なもの(画像の取得に失敗して空のものも含む)はtoFetchへ、家族の箱から消えた(または権限がなくなった)ものはtoRemoveへ。
 export function diffFamilySync(remoteMeta, localRecords) {
   const localById = new Map(localRecords.map(record => [record.id, record]));
   const remoteIds = new Set(remoteMeta.map(file => file.id));
   const toFetch = remoteMeta.filter(file => {
     const local = localById.get(file.id);
-    return !local || local.modifiedTime !== file.modifiedTime;
+    return !local || local.modifiedTime !== file.modifiedTime || !local.thumb;
   });
   const toRemove = localRecords.filter(record => !remoteIds.has(record.id)).map(record => record.id);
   return { toFetch, toRemove };
@@ -35,6 +35,8 @@ export function buildFamilyView(familyRecords, ownPhotosAnnotated) {
     date: record.date,
     tags: Array.isArray(record.tags) ? record.tags : [],
     owner: record.owner || "",
+    mine: Boolean(record.ownedByMe),
+    canTrash: Boolean(record.canTrash),
     thumb: record.thumb || null,
     full: record.full || null,
     shared: true,
@@ -48,6 +50,8 @@ export function buildFamilyView(familyRecords, ownPhotosAnnotated) {
       date: photo.date,
       tags: Array.isArray(photo.tags) ? photo.tags : [],
       owner: "",
+      mine: true,
+      canTrash: false,
       thumb: photo.thumb || null,
       full: photo.blob || null,
       shared: false,

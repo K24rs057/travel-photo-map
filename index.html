@@ -44,7 +44,7 @@
 
       <section id="family-page" class="page" aria-label="家族の写真">
         <div class="page-heading">
-          <p id="family-count">家族の写真</p>
+          <p id="family-count">家族のアルバム</p>
         </div>
         <p id="family-login-hint" class="family-login-hint" hidden>Googleにログインすると、最新の家族の写真に更新されます。<button id="family-login-link" type="button" class="text-button">保存タブでログインする</button></p>
         <div id="family-share-banner" class="family-share-banner" hidden>
@@ -53,7 +53,7 @@
         </div>
         <div id="family-tag-filters" class="tag-filter-row" aria-label="タグで家族の写真を絞り込む"></div>
         <div id="family-grid" class="photo-grid"></div>
-        <div id="family-empty" class="photos-empty" hidden><span aria-hidden="true">👪</span><strong>まだ写真がありません</strong><p>お父さん・お母さんが撮った写真がここに並びます。</p></div>
+        <div id="family-empty" class="photos-empty" hidden><span aria-hidden="true">👪</span><strong>まだ写真がありません</strong><p>家族が共有した写真がここに並びます。</p></div>
       </section>
 
       <section id="settings-page" class="page" aria-label="保存とバックアップ">
@@ -65,8 +65,8 @@
         <div class="settings-card drive-card">
           <div class="settings-symbol">☁</div>
           <div class="drive-body">
-            <h2>Googleドライブ・家族共有</h2>
-            <p>写真をGoogleドライブの家族の箱に保存します。共有した家族はアプリの「家族」タブから、お互いの写真をまとめて見たり、自分でも写真を追加したりできます。</p>
+            <h2>家族と共有</h2>
+            <p>撮った写真は自動で家族のアルバムに入り、「家族」タブでお互いの写真を見られます。Googleアカウントでログインしておくだけで、ほかの操作はいりません。</p>
 
             <div id="drive-checking" class="drive-block" hidden>
               <p class="drive-status">ログイン状態を確認中…</p>
@@ -78,7 +78,7 @@
 
             <div id="drive-signed-in" class="drive-block" hidden>
               <p id="drive-status" class="drive-status"></p>
-              <button id="drive-upload-all" class="action-button">まとめてアップロード</button>
+              <button id="drive-upload-all" class="action-button">まだ共有していない写真をまとめて共有</button>
               <p id="drive-progress" class="drive-progress" hidden></p>
               <div class="drive-share">
                 <h3>共有する家族</h3>
@@ -162,8 +162,8 @@
       <p id="delete-lead"></p>
       <div id="delete-drive-options" hidden>
         <p id="delete-drive-lead"></p>
-        <label class="delete-option"><input type="radio" name="delete-mode" value="local" checked><span><b>この端末だけ消す</b><small>ドライブには残ります。家族の「家族」タブにも残ります。</small></span></label>
-        <label class="delete-option"><input type="radio" name="delete-mode" value="trash"><span><b>ドライブのゴミ箱にも移す</b><small>家族からも見えなくなります。ゴミ箱から戻せます。</small></span></label>
+        <label class="delete-option"><input type="radio" name="delete-mode" value="local" checked><span><b>この端末だけ消す</b><small>家族のアルバムには残ります。</small></span></label>
+        <label class="delete-option"><input type="radio" name="delete-mode" value="trash"><span><b>家族のアルバムからも消す</b><small>家族からも見えなくなります。30日以内ならゴミ箱から戻せます。</small></span></label>
       </div>
       <p class="delete-warn">削除の前に、「保存」タブでバックアップZIPを作っておくと安心です。</p>
       <div class="delete-actions">
@@ -185,6 +185,21 @@
         <div id="family-detail-tags" class="detail-tags" aria-label="写真のタグ"></div>
       </div>
       <button id="family-detail-share" class="action-button" hidden>家族に共有する</button>
+      <button id="family-detail-delete" class="danger-outline-button" type="button" hidden>家族のアルバムから削除</button>
+      <p id="family-detail-lock" class="family-detail-lock" hidden></p>
+    </div>
+  </dialog>
+
+  <dialog id="family-delete-dialog" class="photo-dialog">
+    <span class="sheet-handle" aria-hidden="true"></span>
+    <div class="dialog-header"><h2>家族のアルバムから削除しますか?</h2></div>
+    <div class="detail-body delete-body">
+      <p>家族全員のアルバムから、この写真が消えます。30日以内ならゴミ箱から戻せます。</p>
+      <p>「写真」タブにある同じ写真は消えません。</p>
+      <div class="delete-actions">
+        <button id="family-delete-cancel" class="secondary-button" type="button">キャンセル</button>
+        <button id="family-delete-ok" class="danger-button" type="button">削除する</button>
+      </div>
     </div>
   </dialog>
 
